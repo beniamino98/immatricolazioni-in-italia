@@ -18,8 +18,14 @@ Il nostro team è composto da due persone:
 
 ## Analisi sulle Immatricolazioni nel 2020 
 
+La nostra analisi è focalizzata sulle immatricolazioni italiane. Come prima cosa ne descriviamo il fenomeno con i dati degli ultimi 50 anni. 
+Proveremo poi a creare dei modelli econometrici per *misurare l'effetto covid19* e per *prevedere le immatricolazioni*. L'ultima parte dell'articolo è dedicata ad un'analisi regionale per cercare di capire come siano cambiate le immatricolazioni di fuorisede e non tra il 2019 e 2020 con la pandemia. 
+
 
 ## Importanza dei Dati Open 
+
+Per effettuare le nostra analisi abbiamo dovuto ricercare e soprattutto ripulire e organizzare (con molta difficoltà) tutti i dati di cui potevamo
+aver bisogno. Dato che nonostante questi dati siano in teoria *open* nella pratica il loro utilizzo non sembra essere destinato a chi non ha adeguati strumenti per ripulire i dati. Di conseguenza abbiamo caricato nella cartella **data** tutti i dataset creati (anche se non utilizzati), e le fonti dal quale sono stati presi. 
 
 
 ## Descrizione dei dataset 
