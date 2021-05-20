@@ -12,8 +12,8 @@ Questo contest pertanto si pone come un’opportunità preziosa per lo sviluppo 
 
 Il nostro team è composto da due persone:
 
-- Micol Allegro, studentessa di Giurisprudeza all'Università di Bologna.
-- Beniamino Sartini, studenti di Quantitative Finance all'Università di Bologna.
+- Micol Allegro, studententessa al quinto anno di Giurisprudenza all'Università di Bologna. 
+- Beniamino Sartini, studente di Quantitative Finance all'Università di Bologna.
 
 
 ## Analisi sulle Immatricolazioni nel 2020 
