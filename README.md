@@ -30,4 +30,17 @@ aver bisogno. Dato che nonostante questi dati siano in teoria *open* nella prati
 
 ## Descrizione dei dataset 
 
+### Dati Analisi 
+
+- **df_emigrazioni**: dataset con emigrazioni/immigrazioni e variazioni per il 2019/20 e 2020/21
+- **df_fuorisede_miur**: dataset del miur, ripulito con le immatricolazioni per ateneo e regione di provenienza dal 2010 al 2021.
+- **df_model**: contiene varie serie storiche tra cui quella degli iscritti, immatricolati, diplomati, laureati, popolazione tra i 14-19 anni e popolazione tra 19-25 anni. Il dataset è stato ricavato unendo le serie storiche dell'istat disponibili nella cartella **istat_datasets**, con i dati disponibili sul sito del Miur. 
+
+### Miur Datasets
+Contiene tre dataset in cui sono state aggregate tutte le informazioni disponibili sul sito del Miur: 
+
+- df_atenei_miur: contiene tutti i dati riguardanti gli atenei, iscritti, iscritti al 1anno, immatricolati, laureati...
+- df_atenei_classe: contiene tutti i dati disponibili aggregati per ateneo e classe di laurea, sono disponibili solo i dati sulle immatricolazioni e sulle iscrizioni e sulle lauree, ma sono stati ricavati e aggiunti, non essendo disponibili in questo formato.
+- df_atenei_laurea: pochi e mancanti dati a livello di ateneo, classe e laurea, disponibili solo iscritti , iscritti al 1 anno e laureati, non per tutte le lauree e con molti dati mancanti. 
+
 
