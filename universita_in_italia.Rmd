@@ -1,0 +1,1577 @@
+---
+title: "Le Immatricolazioni nelle Università Italiane"
+date: "`r Sys.Date()`"
+author: "Beniamino Sartini, Micol Allegro"
+output:
+  rmdformats::material:
+    highlight: kate
+    self_contained: true
+    code_folding: hide
+    thumbnails: true
+    gallery: true
+    fig_width: 7
+    fig_height: 5
+    df_print: kable
+---
+
+```{r setup, include=FALSE}
+## Global options
+
+library(knitr)
+library(rmdformats)
+
+options(max.print="75")
+opts_chunk$set(cache=FALSE,
+               prompt=FALSE,
+               tidy=TRUE,
+               comment=NA,
+               message=FALSE,
+               warning=FALSE)
+
+opts_knit$set(width=75)
+
+library(plotly)
+library(tidyverse)
+library(broom)
+library(kableExtra)
+library(leaflet)
+library(sf)
+library(htmlwidgets)
+library(htmltools)
+library(ggthemes) # temi   
+library(sandwich) # test modello 
+library(lmtest)   # test modello 
+library(nlme)     # stima modello per errori autocorrelati 
+library(readxl)
+library(ggtext)
+
+load("data/miur_env.RData")
+
+source("plot_functions.R")
+
+df_atenei      =  miur_env$atenei 
+df_atenei_miur = miur_env$data$atenei
+df_emigrazioni = miur_env$data$regioni
+df_fuorisede   = miur_env$data$fuorisede2
+
+# mappa regioni italiane 
+mapIta = sf::st_read("data/geo_data/regioni.geojson")
+base_map = leaflet(mapIta, width = "100%") %>%
+  addProviderTiles(providers$OpenStreetMap) %>%
+  setView(12, 42, 5) %>%
+  addPolygons(color = "#03F", opacity = 0.2)
+
+# dataset per l'analisi econometrica
+df_model <- read_excel("data/tavole_istat/tavole_istat.xlsx", sheet = "Italia")
+df_model = df_model %>%
+  mutate(lag1_imm_totali = lag(imm_totali, 1), 
+         lag1_dip_totali = lag(diplomati_totali, 1),
+         
+         lag1_immatricolati = lag(imm_totali, 1), 
+         lag1_diplomati = lag(diplomati_totali, 1), 
+         lag1_pop1925 = lag(pop1925, 1), 
+         lag1_pop1419 = lag(pop1419, 1), 
+         
+         var_pop1925 = (pop1925 - lag1_pop1925)/pop1925*100, 
+         var_pop1419 = (pop1419 - lag1_pop1419)/pop1419*100, 
+         
+         var_immatricolati = (imm_totali-lag1_immatricolati)/lag1_immatricolati*100,
+         var_diplomati = (diplomati_totali-lag1_diplomati)/lag1_diplomati*100, 
+         
+         lag1_var_diplomati = lag(var_diplomati,1), 
+         lag1_var_immatricolati = lag(var_immatricolati,1),
+         lag1_var_pop1925 = lag(var_pop1925, 1),
+         lag1_var_pop1419 = lag(var_pop1419, 1), 
+         
+         lag2_var_diplomati = lag(var_diplomati,2), 
+         lag2_var_immatricolati = lag(var_immatricolati,2), 
+         lag2_var_pop1925 = lag(var_pop1925, 2),
+         lag2_var_pop1419 = lag(var_pop1419, 2)) %>%
+  mutate(
+         covid19 = ifelse(anno == 2020, 1, 0), 
+         CrisiIT = ifelse(anno == 2012, 1,0),
+         RiformaBerlinguer = ifelse(anno %in% c(2000:2003), 1, 0),
+         RiformaMoratti = ifelse(anno %in% c(2005:2006), 1, 0),
+         RiformaBrunetta   = ifelse(anno %in% c(2008:2009), 1, 0), 
+         RiformaGelmini = ifelse(anno %in% c(2010:2013), 1, 0)
+         )  
+
+```
+
+
+# 1. Le Immatricolazioni in Italia  
+
+## Introduzione e presentazione {.tabset}
+
+Prima di iniziare ci vorremmo presentare: 
+
+Siamo due studenti fuorisede, viviamo a Bologna e siamo quasi alla fine del nostro percorso di laurea magistrale. 
+Avendo vissuto in pieno la pandemia dal suo inizio e avendone seguito gli sviluppi nell'ultimo anno e mezzo, ci siamo chiesti quali possano essere stati gli effetti sui nuovi studenti e di come abbia potuto influenzare le loro scelte. Di conseguenza abbiamo deciso di svolgere un'analisi del panorama universitario italiano affrontando il problema in chiave **statistico-giuridico**.
+
+Il seguente file e tutti i dataset utilizzati sono stati caricati su una repository di [Github](https://github.com/beniamino98/le-immatricolazioni-nelle-universita-italiane). 
+
+
+## Gli Obbiettivi
+
+L'obbiettivo principale di questo articolo è la ricerca di cambiamenti riguardanti i ragazzi che *entrano per la prima volta nel mondo universitario*, di conseguenza la variabile di interesse che abbiamo scelto per l'analisi è il numero di immatricolati, definito come:
+
+- Sono considerati **immatricolati** solo gli studenti che si sono iscritti per la prima volta nella loro vita ad un corso di laurea. Questo numero rappresenta effettivamente quanti nuovi studenti entrano nel mondo universitario dal momento che non considera evenutali cambi di corso o di ateneo. 
+
+L'analisi partirà da una visione del fenomeno a livello nazionale, per poi stringersi fino a porre l'attenzione sulle singole regioni, inoltre  nel corso dell'articolo cercheremo di rispondere ad alcune domande che ci siamo posti:
+
+1. Qual è stata l'evoluzione delle immatricolazioni negli ultimi 50 anni? E' possibile individuare delle variabili che possano spiegare questa dinamica?
+2. Qual è stato il reale *impatto del Covid19* sulle immatricolazioni a livello nazionale? 
+3. E' possibile costruire un modello per *prevedere* il numero di immatricolati?
+4. Come sono cambiate le preferenze degli studenti con il Covid19? Quali sono le regioni che attirano più studenti? E quali quelle da cui ne vanno via di piu?
+5. Il Covid19 ha disincentivato gli *spostamenti fuori regione* per ragioni di studio?
+
+## Analisi Esplorativa delle Immatricolazioni 
+
+
+Per iniziare, abbiamo deciso di analizzare l'andamento della serie storica delle immatricolazioni in Italia in modo da monitorarne l'evoluzione negli ultimi anni.
+Inizialmente avevamo sfruttato solo i dati reperibili dal sito del [Miur](http://ustat.miur.it/opendata/), tuttavia essendo dati riferiti agli anni che vanno dal 1998 al 2020 non riuscivamo a cogliere una *visione generale* del fenomeno. Di conseguenza per estendere la nostra comprensione, abbiamo deciso di ricostruire delle serie storiche aggiungendo anche i dati disponibili sul sito dell' [Istat](https://www.istat.it), ottenendo cosi delle informazioni più dettagliate che spaziano dal 1963 fino ad oggi. 
+
+
+```{r, Grafico immatricolati Anni 1963-2020, echo = TRUE}
+
+spot_points = tibble(anno = c(1969, 1981, 1993, 1999, 2003, 2013, 2020 ),
+                     imm_totali = filter(df_model, anno %in% c(1969, 1981, 1993, 1999, 2003, 2013, 2020))$imm_totali,
+                     label = c("1969", "1981", "1993", "1999", "2003", "2013", "2020" ), 
+                     nudge_y = c(-10,-10,10,-10,10,-10,10),
+                     nudge_x = c(1.5, 0,0,0,0,0,0))
+
+ggplot(df_model) +
+  geom_line(aes(anno, imm_totali/1000, group = 1), col = "black", size = 1)+
+  geom_point(data = spot_points, aes(anno, imm_totali/1000, group = 1), col = "red", size = 1.5)+
+  geom_text(data = spot_points, aes(anno + nudge_x, imm_totali/1000 + nudge_y, label = label))+
+  ggthemes::theme_solarized() +
+  scale_fill_manual(values = c("#F58772", "#B7F28D"))+
+  theme(axis.text.x = element_text(angle = 0, face = "bold"), 
+        axis.text.y = element_text(face = "bold"), 
+        axis.title  = element_text(face = "bold"),
+        plot.title  = element_text(face = "bold"),
+        plot.subtitle = element_text(face = "italic"),
+        plot.caption = element_text(face = "italic"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_line(colour="grey60", linetype="dotted"),
+        legend.position = "none" ) +
+  labs(
+    x = "Anno Accademico",
+    y = "Immatricolati (migliaia)",
+    title = "Immatricolati in Italia", 
+    subtitle = "Anni Accademici 1963/1964 - 2020/2021",
+    caption = "Fonte: Istat, Miur Open Data") +
+  scale_x_continuous(breaks =  seq(1965,2020, 5)) +
+  annotate("rect", ymin=c(230), ymax=c(380), xmin=c(1991) , xmax=c(2022), alpha=0.05, color="#F58772", fill="#F58779") 
+ 
+```
+
+## Prime considerazioni 
+
+- Il punto di partenza è il *1969* anno di emanazione della **legge Codignola** che ha costituito un punto di svolta: fino ad allora infatti
+l'accesso all'università era consentito solo agli studenti provenienti dai licei; da quel momento in poi, venendo a mancare questo
+sbarramento, l'accesso all'università era permesso, *almeno teoricamente*, a tutti gli studenti. Il grafico mostra senz'altro un'andamento
+crescente nel periodo successivo, ma non elevato come ci si potrebbe ragionevolmente aspettare. 
+
+- **Periodo di stagnazione dal 1975-85**: nel decennio tra gli anni settanta fino alla prima metà degli anni ottanta sembra esserci stato un
+periodo di stallo: uno dei fatti storici caratterizzanti questo periodo è la **Crisi Energetica** e i disagi alla mobilità (e non solo) che ne
+conseguirono. Si potrebbe pensare che in questo periodo ci siano stati ulteriori fattori esterni che abbiano portato la situazione a essere leggeremente
+decrescente o stabile, registrando il **minimo** di immatricolati nel **1981**.
+
+Negli **ultimi 30 anni ** l'andamento potrebbe sembrare ciclico, tuttavia: 
+
+- Possiamo evidenziare **due massimi**: uno nel **1993** e l'altro nel **2003**. Il massimo del 2003 potrebbe essere ricondotto agli effetti
+della *legge Berlinguer* dei primi anni duemila, in cui venne operata una distinzione tra lauree triennali, lauree magistrali e magistrali a
+ciclo unico. L'effetto sembrerebbe essere stato particolarmente positivo, ma di carattere transitorio avendo interessato solo il periodo dal
+1999 al 2003. 
+
+- **Minimo del 2013**: questo valore risulta interessante nella nostra analisi, considerando che dal 2003 al 2013 gli immatricolati sono in calo
+costante. In questi anni sono state emanate diverse leggi con lo scopo di aumentare l'indipendenza economica ed amministrativa degli atenei. 
+Un altro dato rilevate è stata la *crisi economica del 2007*, la quale ha provocato una situazione di particolare disagio in Italia (toccando vari ambiti) 
+fino a raggiungere il proprio apice proprio nel *2012-13*, con l'aumento dello spread, le dimissioni dell'allora Presidente del Consiglio
+Berlusconi e la costituzione del *governo tecnico Monti*. Senza dubbio in quel periodo in Italia vigeva un clima di profonda incertezza sul
+futuro e, probabilmente, si potrebbe ipotizzare anche sull'*utilità di conseguire una laurea*.
+
+
+## La Demografia dei ragazzi in Italia
+
+
+Dopo aver esaminato l'andamento generale della nostra variabile di interesse, vogliamo cercare di capire se *effettivamente* in italia il numero medio di studenti che decide di intraprendere gli studi sia aumentato. 
+
+Dare il giusto rilievo a questo aspetto risulta particolarmente difficoltoso, infatti se volessimo rapportare il numero di immatricolati al numero di ragazzi tra i 19 e i 25 anni, potremmo giungere a deduzioni errate, in quanto il risultato sarebbe influenzato dalla **(de)crescita demografica**, che in Italia ha seguito un *calo repentino* negli ultimi venti anni. 
+
+
+```{r,popolazione 19-25 anni in italia, echo = TRUE, warning=FALSE, message=FALSE}
+
+spot_points = tibble(anno = c(1969, 1981, 1993, 1999, 2003, 2013, 2020 ),
+                     pop1925 = filter(df_model, anno %in% c(1969, 1981, 1993, 1999, 2003, 2013, 2020 ))$pop1925, 
+                     pop1419 = filter(df_model, anno %in% c(1969, 1981, 1993, 1999, 2003, 2013, 2020 ))$pop1419, 
+                     label = c("1969", "1981", "1993", "1999", "2003", "2013", "2020" ), 
+                     nudge_y = c(-50, 30,2,50,170,100,80),
+                     nudge_x = c(1.5,2,-2,1.5,1,0,0))
+ggplot(df_model) +
+  geom_line(aes(anno, pop1925/1000, group = 1), col = "black", size = 1)+
+  geom_point(data = spot_points, aes(anno, pop1925/1000, group = 1), col = "red", size = 1.5)+
+  geom_text(data = spot_points, aes(anno + nudge_x, pop1925/1000 + nudge_y, label = label))+
+  xlab("Anno Accademico")+
+  ylab("Valore (in migliaia)")+
+  ggtitle("Popolazione di ragazzi tra i 19 e i 25 anni", subtitle = "Italia, Anni 1963 - 2021")+
+  ggthemes::theme_solarized() +
+  scale_fill_manual(values = c("#F58772", "#B7F28D"))+
+   theme(axis.text.x = element_text(angle = 0, face = "bold"), 
+        axis.text.y = element_text(face = "bold"), 
+        axis.title  = element_text(face = "bold"),
+        plot.title  = element_text(face = "bold"),
+        plot.subtitle = element_text(face = "italic"),
+        plot.caption = element_text(face = "italic"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_line(colour="grey60", linetype="dotted"),
+        legend.position = "none" ) +
+  labs(caption = "Fonte: Istat") + 
+  scale_x_continuous(breaks = c(1965, 1970, 1975, 1980, 1985, 1990, 1995, 2000, 2005, 2010, 2015, 2020))
+ 
+```
+
+Osservando il grafico, a partire dagli anni ottanta è possibile notare una drastica dimiuzione della popolazione tra i 19 e i 25 anni fino a raggiungere il **minimo nel 2003**. 
+
+Negli ultimi venti anni la situazione, seppur con dei livelli nettamente inferiori rispetto al passato, sembrerebbe essere caratterizzata da una certa stabilità. 
+Pur non volendo entrare nel merito di previsioni demografiche, dato che sarebbe un argomento molto vasto, è comunque possibile esprimere delle preoccupazioni rigurardanti il futuro delle università italiane, che potranno contare su un numero sempre minore di giovani di nazionalità italiana.
+ 
+## Un indicatore per le Immatricolazioni 
+
+Dopo aver fornito un quadro generale, abbiamo deciso di costruire un indicatore che potesse riuscire a rappresentare *un aumento di immatricolazioni a parità di altre condizioni*: il più esplicativo che abbiamo individuato è stato il rapporto tra il numero di immatricolati e il numero di ragazzi tra i 19-25 anni, (*indicato con il nome di Pop1925*) al quale sono stati sottratti i ragazzi che sono iscritti all'università per rappresentare i giovani che non studiano. L'indicatore, che abbiamo chiamato semplicemente con il nome di *Rapporto Immatricolati*, (**RI**) è stato calcolato come segue: 
+
+$$ RI = \frac{Immatricolati}{Pop1925 - Iscritti}*100$$
+
+La finalità di questo indicatore è quella di evidenziare la percentuale di immatricolati in rapporto alle persone attualmente **non iscritte all'iniversità**.
+
+
+```{r,Rapporto Imm su pop meno isc, echo = TRUE, warning=FALSE, message=FALSE}
+
+spot_points = tibble(anno = c(1969, 1981, 1993, 1999, 2003, 2013, 2020 ),
+                     imm_totali = filter(df_model, anno %in% c(1969, 1981, 1993, 1999, 2003, 2013, 2020 ))$imm_totali,
+                     isc_totali = filter(df_model, anno %in% c(1969, 1981, 1993, 1999, 2003, 2013, 2020 ))$isc_totali,
+                     pop1925 = filter(df_model, anno %in% c(1969, 1981, 1993, 1999, 2003, 2013, 2020 ))$pop1925, 
+                     label = c("1969", "1981", "1993", "1999", "2003", "2013", "2020" ), 
+                     nudge_y = c(1.5,1.1,0,-1,1,-1,1),
+                     nudge_x = c(0,0,-1.5,0,0,0,0))
+ggplot(df_model) +
+  geom_line(aes(anno, imm_totali/(pop1925 - isc_totali)*100, group = 1), col = "black", size = 1)+
+  geom_point(data = spot_points, aes(anno,imm_totali/(pop1925 -isc_totali)*100, group = 1), col = "red", size = 1.5)+
+  geom_text(data = spot_points, aes(anno + nudge_x, imm_totali/(pop1925 -isc_totali)*100+ nudge_y, label = label))+
+  xlab("Anno Accademico")+
+  ylab("Rapp (%)")+
+  ggtitle("Rapporto Immatricolati*", subtitle = "Popolazione di 19-25 anni, Anni Accademici 1963/1964 - 2020/2021")+
+  ggthemes::theme_solarized() +
+  scale_fill_manual(values = c("#F58772", "#B7F28D"))+
+   theme(axis.text.x = element_text(angle = 0, face = "bold"), 
+        axis.text.y = element_text(face = "bold"), 
+        axis.title  = element_text(face = "bold"),
+        plot.title  = element_text(face = "bold"),
+        plot.subtitle = element_text(face = "italic"),
+        plot.caption = element_text(face = "italic"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_line(colour="grey60", linetype="dotted"),
+        legend.position = "none" ) +
+  labs(caption = "Fonte: (*) Rielaborazione Dati Istat, Miur Open Data") + 
+  scale_x_continuous(breaks = c(1965, 1970, 1975, 1980, 1985, 1990, 1995, 2000, 2005, 2010, 2015, 2020))
+ 
+```
+
+Confrontando il grafico delle immatricolazioni totali con il rapporto calcolato vengono evidenziati **tre aspetti interessanti**: 
+
+1. Tra il **1969 e il 1981**, nonostante le immatricolazioni sembravano essere aumentate in valore assoluto, in realtà non è stato così: una volta rapporto il valore al numero di *giovani potenziali* sembrerebbe quasi **stagnante**, ad indicare che quell'aumento di immatricolati in realtà potrebbe essere rincoducibile a delle variazioni demografiche. 
+
+2. L' **aumento** di immatricolazioni alla fine degli **anni ottanta** e quello dei primi **anni duemila** hanno portato ad un **aumento in percentuale dei ragazzi che entrano all'università**, dato estremamente positivo, ma transitorio. 
+
+3. L'ipotesi di un'andamento ciclico degli immatricolati negli ultimi 20 anni sembra venire rafforzata dalla similitudine dei due grafici in quel perido. Tuttavia dato che il ciclo riguarda anche il rapporto calcolato possiamo fare alcune considerazioni riguardo la sua natura. Potremmo ipotizzare che la diminuzione dal 2003 al 2013, possa essere ricondotta a fattori esterni, ad esempio legati alla Crisi Economica, come ad esempio la perdita di speranza nel futuro dal mmento che **a una diminuzione di immatricolazioni corrisponde ad una diminuzione della percentuale di giovani che decidono di studiare**. Dal 2013, la situazione sembra ritornare, anche se molto lentamente, ai livelli precedenti. 
+
+
+# 2. Un modello per l'effetto Covid19
+
+## Le Previsioni *catastrofiche* per il 2021 {.tabset}
+
+Dopo lo scoppio della Pandemia all'inizio del 2020, si sono susseguite previsioni tragiche circa il numero di immatricolazioni nell'anno successivo.
+
+Riportiamo un [articolo](https://www.ilsole24ore.com/art/allarme-covid-universita-2020-21-rischio-10mila-iscritti-ADDTTgZ) del Sole 24 Ore, il cui titolo recitava: *perdita di 10mila iscritti*. Proseguendo nella lettura, abbiamo notato una discordanza terminologica in quanto continua parlando non più di iscritti, bensì di immatricolati. Questa variazione terminologica potrebbe farci pensare che l'autore non abbia prestato attenzione alla differenza sostanziale tra i due termini, il che potrebbe portare a consideranzioni differenti a seconda della loro interpretazione. 
+
+Dal momento che questa *confusione* nell'utilizzo del termine *iscritti* al posto di *immatrcolati* è molto diffusa, abbiamo ipotizzato che anche nell'articolo l'autore si riferisse in realtà alle *immatricolazioni*. Per evitare qualsiasi malinteso, in quest'articolo consideriamo la definizione riportata nell'introduzione.
+
+## Ricerca delle variabili
+
+Per **verificare statisticamente** se ci sia stato o meno un **effetto Covid19**, abbiamo deciso di costrurire un modello econometrico in grado di *spiegare* l'andamento degli immatricolati nel tempo, e di ottenere così delle informazioni sull'evoluzione del fenomeno, in modo da poter fare affermazioni su un possibile effetto Covid19.
+
+Per costruire un modello in grado di spiegare il nostro fenomeno occorre ricercare delle variabili *correlate* con il fenomeno oggetto di interesse. 
+Dal momento che abbiamo deciso di creare un modello occorre fare particolare attenzione ai concetto di **correlazione** e **causalità** di cui non riporteremo definizioni matematiche o statistiche, ma per spiegarlo cercheremo di usare questa foto: 
+
+![Correlazione e Causalità](corr_caus2.png){#id .class width=400 height=300px}
+
+
+- La **correlazione** indica semplicemente che esiste un *legame tra due fenomeni*, **può essere misurata matematicamente** e ci può aiutare a formulare modelli matematici e a fare previsioni, tuttavia non possiamo fare affermazioni circa la **causalità** tra i due fenomeni.
+
+- La **causalità**: indica che un fenomeno *causa* un altro, e siamo sicuri che questa influenza vada da una direzione all'altra. 
+
+## Gli Immatricolati e i Diplomati 
+
+Una variabile *correlata* con gli immatricolati è il numero di diplomati: è ragionevole pensare che una variazione di diplomati quest'anno si rifletta sulle immatricolazioni dell'anno prossimo dato che sono presenti piu *giovani potenziali* che hanno accesso al mondo universitario. 
+
+Tuttavia, dopo le considerazioni fatte, vogliamo ribadire che anche se il modello dovesse *funzionare*, non potremmo mai essere certi che effettivamente una variazione nei diplomati abbia un *effetto causale* (ovvero che ne sia la causa) sulla variazione di immatricolati. 
+
+Osserviamo ora l'andamento dei diplomati dal 1963 ad oggi: 
+
+```{r, Grafico Diplomati 1963-2020, echo=TRUE}
+
+spot_points = tibble(anno = c(1986, 1992, 1999 ),
+                     diplomati_totali = c(331861, 490871, 444367), 
+                     label = c("1986", "1992", "1999"), 
+                     nudge_y = c(-20,20,-20))
+
+ggplot(df_model) +
+  geom_line(aes(anno, diplomati_totali/1000, group = 1), col = "black", size = 1)+
+  geom_point(data = spot_points, aes(anno, diplomati_totali/1000, group = 1), col = "red", size = 1.5)+
+  geom_text(data = spot_points, aes(anno, diplomati_totali/1000 + nudge_y, label = label))+
+  xlab("Anno Accademico")+
+  ylab("Diplomati (migliaia)")+
+  ggtitle("Diplomati in Italia", subtitle = "Anni Accademici 1963/1964 - 2020/2021")+
+  ggthemes::theme_solarized() +
+theme(axis.text.x = element_text(angle = 0, face = "bold"), 
+        axis.text.y = element_text(face = "bold"), 
+        axis.title  = element_text(face = "bold"),
+        plot.title  = element_text(face = "bold"),
+        plot.subtitle = element_text(face = "italic"),
+        plot.caption = element_text(face = "italic"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_line(colour="grey60", linetype="dotted"),
+        legend.position = "none" ) +
+  labs(caption = "Fonte: Istat") + 
+  scale_x_continuous(breaks = c(1965, 1970, 1975, 1980, 1985, 1990, 1995, 2000, 2005, 2010, 2015, 2020))
+
+
+```
+
+- L'andamento di diplomati sembra in **crescita costante** fino al **1992**, il che sembrerebbe un dato positivo.
+
+- Negli ultimi trent'anni possiamo osservare un numero pressochè costante di diplomati, probailmente frutto del fatto che l'istruzione è diventata obbligatoria almeno fino ai 16 anni di età. 
+
+
+
+```{r, Grafico Relazione Diplomati Immatricolati, echo=TRUE}
+
+ggplot(df_model[-c(1,2),], aes(lag1_var_diplomati, var_immatricolati))+
+  geom_line(size = 0.9) +
+  geom_smooth(method = "lm", se = FALSE, col = "red", formula = y ~ x) +
+  xlab("Diplomati (%)")+
+  ylab("Immatricolati (%)")+
+  ggtitle("Relazione tra Diplomati e Immatricolati", subtitle = "Relazione tra la variazione di immatricolati nell'anno corrente (y) e la variazione \n di immatricolati nell'anno passato (x). Il periodo considerato va dal 1963 al 2020.")+
+  ggthemes::theme_solarized() +
+theme(axis.text.x = element_text(angle = 0, face = "bold"), 
+        axis.text.y = element_text(face = "bold"), 
+        axis.title  = element_text(face = "bold"),
+        plot.title  = element_text(face = "bold"),
+        plot.subtitle = element_text(face = "italic"),
+        plot.caption = element_text(face = "italic"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_line(colour="grey60", linetype="dotted"),
+        legend.position = "none" ) +
+  labs(caption = "Fonte: Rielaborazione dati Istat, Miur Open Data") + 
+  scale_x_continuous(breaks = c(-5,  0, 5,  10, 15))+
+  scale_y_continuous(breaks = c(-10,  0, 10, 20))
+ 
+
+```
+
+Il grafico conferma in parte il nostro ragionamento: sembrerebbe sussistere una relazione lineare positiva tra le due variabili, seppur caratterizzata da un'elevata variabilità. 
+Ora andremo a rispondere alle seguenti domande: 
+
+- *Una variazione nel numero di diplomati provoca una variazione nel numero di immatricolati?* 
+- *Esiste un'effetto Covid19?*
+
+Il passo successivo sarà verificare *statisticamente* se ci siano stati degli effetti particolari durante il 2021. Iniziamo con il dire che la previsione riportata nell'articolo era completamente errata: a livello nazionale si è verificato un **aumento delle immatricolazioni** di **13876** studenti, ovvero il **4,43%** in più rispetto al 2019/20. 
+
+## Formulazione del modello 
+
+Nella costruzione del modello vogliamo tenere conto dell'**effetto covid**, per farlo utilizzeremo quella che in econometria
+viene definita "*variabile Dummy*". Questa assume *valore 1 in determinate condizioni e zero in tutti gli altri casi*.
+
+Le variabili dummy vengono utilizzate per *"catturare"* degli effetti che avvengono in determinate condizioni, nel nostro caso **l'effetto della pandemia sulle immatricolazioni**. La variabile Dummy che abbiamo creato sarà indicata con il nome di *Covid19* e assumerà valore uno nell'anno 2020/2021 e zero in tutti gli altri anni. 
+
+Il modello costruito è lineare e molto semplice dal momento che la finalità della sua costruzione non è previsiva, ma essenzialmente *descrittiva*. La forma funzionale che abbiamo ipotizzato è la seguente: 
+
+$$ \Delta IMM_t = \alpha_0 + \alpha_1 \Delta DIP_{t-1} +  \alpha_2 Covid19$$
+
+-$\Delta IMM_t$: variazione percentuale degli immatricolati nell'anno t.
+
+-$\Delta DIP_t$: variazione percentuale dei diplomati nell'anno t.
+
+Di seguito riportiamo le stime ottenute per i coefficenti $\alpha_0$, $\alpha_1$, $\alpha_2$, che rappresentano rispettivamente: 
+
+- $\alpha_0$: intercetta del modello, ovvero il livello minimo del fenomeno. 
+
+- $\alpha_1$: coefficente per l'*effetto diplomati* e misura l'influenza della variazione dei diplomati nell'anno precedente sulle 
+immatricolazioni nell'anno corrente. 
+
+- $\alpha_2$: coefficente stimati per l'*effetto Covid19*, ci dice, in media, quanto la variazione di immatricolazioni sia dovuta a fattori 
+presenti nell'anno 2020 (ovvero la Pandemia).
+
+```{r, Modello Diplomati, echo=TRUE}
+
+modello_ridotto = lm(var_immatricolati ~ lag1_var_diplomati  +  covid19, data = df_model)
+
+broom::tidy(modello_ridotto) %>%
+  mutate(estimate = round(estimate, 3)) %>%
+  mutate_if(is.numeric, round, 2)%>%
+  select(alpha = "term", stima = "estimate", errore = "std.error", p.value) %>%
+  mutate(alpha = c("Intercetta", "Effetto Diplomati (t-1)", "Effetto Covid19 (2020)")) %>%
+knitr::kable(caption = "Modello con Diplomati") %>%
+kableExtra::kable_classic() %>% 
+kable_styling() %>%
+  row_spec(c(1,2,3), font_size = 14) %>%
+  row_spec(c(2,3), bold = T, color = "black", background = "yellow")   %>%
+  column_spec(c(3,4), background = "white", color = "black")
+
+```
+
+
+Un modello di questo tipo potrebbe essere utilizzato in due modi: **descrivere** e **prevedere**. 
+In questo caso a noi interessano entrambe, soprattutto la descrizione. Dal momento che abbiamo stimato una relazione lineare tra le due variabili, possiamo facilmente interpretare i coefficenti del modello: 
+
+- Ad una *variazione* dell'**1 % dei diplomati nell'anno precedente** corrisponde, in media, una *variazione* del **0,88 % del numero di Immatricolati nell'anno corrente**. L'impatto dei diplomati sembra esistere ed essere positivo. Per capirne l'utilità pratica, proviamo a fare un esempio: immaginiamo di sapere che quest'anno *i diplomati sono aumentati del 5% rispetto allo scorso anno*, in base al modello potremmo dire che l'impatto di questa variazione sugli immatricolati l'anno prossimo sarà del **4,4% in più**, quindi prevediamo un aumento. Al contrario, immaginiamo che *i diplomati siano diminuiti del 5% rispetto allo scorso anno*, l'impatto sarà sempre **4,4%**, ma in meno. 
+
+- Il coefficente stimato per l'**effetto Covid-19** sta ad indicare che **la variazione di immatricolati per il 2020 è stata in media, del 2 % maggiore rispetto agli altri anni**. Tuttavia il coefficente stimato *non risulta significativo*, il che in statistica equivale a dire che la probabilità che il coefficente stimato sia in realtà uguale a zero è alta. Di conseguenza, potremmo affermare che: *non sembrano esserci delle evidenze statistiche circa un effetto particolare (attribuibile alla pandemia) sulle immatricolazioni a livello nazionale nel 2020*. 
+
+
+```{r, Previsione Modello Diplomati, echo=TRUE}
+
+tibble(
+   anno_acc = df_model$anno[-c(1,2)],
+   empiric  = df_model$imm_totali[-c(1,2)],
+   prediction =  (1+predict(modello_ridotto)/100)*df_model$lag1_imm_totali[-c(1,2)],
+   lower_bound = as.vector(confint(modello_ridotto, level = 0.99)[,1] %*% t(model.matrix(modello_ridotto))),
+   upper_bound = as.vector(confint(modello_ridotto, level = 0.99)[,2] %*% t(model.matrix(modello_ridotto)))
+ ) %>%
+   ggplot() +
+   geom_line(aes(anno_acc, empiric/1000, group = 1), size = 0.8, alpha = 0.5)+
+   geom_line(aes(anno_acc, prediction/1000, group = 1), col = "red", size = 1, alpha = 0.8) +
+   #geom_line(aes(anno_acc, lower_bound, group = 1), col = "blue", alpha = 0.5) +
+   #geom_line(aes(anno_acc, upper_bound, group = 1), col = "blue", alpha = 0.5) +
+   xlab("Anno Accademico")+
+   ylab("Immatricolati (migliaia)")+
+   ggtitle("Previsione Immatricolati: Valori Reali vs Previsti", subtitle = "Modello con i Diplomati")+
+   ggthemes::theme_solarized() +
+  theme(axis.text.x = element_text(angle = 0, face = "bold"), 
+        axis.text.y = element_text(face = "bold"), 
+        axis.title  = element_text(face = "bold"),
+        plot.title  = element_text(face = "bold"),
+        plot.subtitle = element_text(face = "italic"),
+        plot.caption = element_text(face = "italic"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_line(colour="grey60", linetype="dotted"),
+        legend.position = "none" ) +
+  labs(caption = "Fonte: Rielaborazione dati Istat, Miur Open Data") + 
+  scale_x_continuous(breaks = c(1965, 1970, 1975, 1980, 1985, 1990, 1995, 2000, 2005, 2010, 2015, 2020)) 
+
+
+```
+
+
+## Alcune Considerazioni
+
+- Come possiamo vedere dal grafico il modello si adatta abbastanza bene alla realtà, tuttavia tende a sovrastimare in alcuni periodi con grandi variazioni, soprattutto per il *1993 il valore previsto si discosta molto dalla realtà*.
+
+- Utilizzando questo modello **non sono state riscontrate evidenze statistiche su un eventuale effetto covid19**.
+
+- Se volessimo utilizzare questo modello per *prevedere* le immatricolazioni future rimarremmo vincolati ai dati sui diplomati. Una previsione è *utile* solo se viene fatta con un certo anticipo, di conseguenza questa non sarebbe la scelta più adeguata. 
+
+
+# 3. E' Possibile prevedere le Immatricolazioni? 
+
+Dopo aver constatato che non sembrano esserci stati degli effetti attribuibili al Covid19, ci siamo posti un ulteriore domanda: supponendo di avere a disposizione **unicamente** *i dati sugli immatricolati fino all'anno 2018*, e nient'altro, riusciremmo ad elaborare una **previsione attendibile** per gli immatricolati **futuri?**
+
+## Un modello Autoregressivo {.tabset}
+
+Quando si analizza una serie storica è importante cercare di capire se il processo *ha memoria*, ovvero se è influenzato dai propri valori passati. In questo caso l'ipotesi che formuliamo è la seguente:
+
+- *Conoscendo il numero di immatricolati nell'anno corrente possiamo prevedere quello dell'anno prossimo?* 
+
+Definiamo modello **autoregressivo di ordine 1**, un modello che mette in relazione i valori di una variabile al tempo *t* con i valori della stessa variabile al tempo *t-1*. 
+
+Ora abbiamo tutto il necessario per provare a formulare un nuovo modello econometrico. In questo caso proveremo un'approccio differente dal precedente, il modello ipotizzato è: 
+
+$$\Delta IMM_t = \alpha_0 + \alpha_1 \Delta IMM_{t-1}$$
+
+La logica in questo tipo di approccio è la seguente: il modello dipende solo dai valori passati della variabile dipendente, di conseguenza potremmo prevedere *potenzialmente* infiniti valori nel futuro, tuttavia il margine di errore cresce andando avanti nel tempo. Inoltre per capire quanto possano essere affidabili delle previsioni future è bene non considerare dei valori, nel nostro caso 2019 e 2020, nella stima dei dati, e vedere poi come si *comporta* il modello. Facendo una valutazione sugli errori della stima siamo in grado di capire quanto possano essere affidabili le nostre previsioni sul futuro.  
+
+Di seguito riportiamo le stime del nuovo modello, in appendice sono disponibili delle considerazioni e dei test statistici. 
+
+```{r, Modello Autoregressivo ordine 1, echo=TRUE}
+
+df_train = df_model[1:56,] 
+
+df_test = df_model[56:58,]
+
+modello_ar1 = lm(var_immatricolati ~  lag1_var_immatricolati, data = df_train)
+
+broom::tidy(modello_ar1) %>%
+  mutate(estimate = round(estimate, 3)) %>%
+  mutate_if(is.numeric, round, 2)%>%
+  select(alpha = "term", stima = "estimate", errore = "std.error", p.value) %>%
+  mutate(alpha = c("Intercetta", "Effetto Immatricolati in t-1")) %>%
+knitr::kable(caption = "Modello AR(1)") %>%
+kableExtra::kable_classic() %>% 
+kable_styling() %>%
+  row_spec(c(2), bold = T, color = "black", background = "yellow", font_size = 13)  
+
+```
+
+
+## Previsione per il 2022
+
+Il modello *prevede la variazione percentuale di immatricolati*, quindi per ricavare il valore assoluto occorre articolare il procedimemento in due parti: in primo luogo una previsione delle variazioni percentuali e in secondo luogo un'estrapolazione dei valori assoluti, il dettaglio della procedura è riportato in appendice. 
+
+ 
+```{r}
+df_test = df_model[56:58,]
+
+var2019 = predict(modello_ar1, df_test[2,]) 
+pred2019 = (1+var2019/100) * df_test[1,]$imm_totali
+
+var2020 = predict(modello_ar1, df_test[3,])
+pred2020 = (1+var2020/100) * df_test[2,]$imm_totali
+
+var2021 = coef(modello_ar1)[1]+coef(modello_ar1)[2]*var2020
+pred2021 = (1+var2021/100) * pred2020
+
+low.bound = confint(modello_ar1, level = 0.99)[1,1]+confint(modello_ar1, level = 0.9)[2,1]*var2020
+upp.bound = confint(modello_ar1, level = 0.9)[1,2]+confint(modello_ar1, level = 0.7)[2,2]*var2020
+low.pred = ((1+low.bound/100) * pred2020) %>% as.integer()
+upp.pred = ((1+upp.bound/100) * pred2020) %>% as.integer()
+
+
+df_pred = 
+bind_rows(
+tibble(variabile  = c("variazione 2019/20", "variazione 2020/21", "variazione 2021/22"), 
+       previsione = c(var2019, var2020, var2021),
+       realta = c(df_test$var_immatricolati[2:3], NA),
+       errore = realta - previsione)%>%
+  mutate_if(is.numeric, round, 2),
+
+tibble(variabile  = c("immatricolati 2019/20", "immatricolati 2020/21", "immatricolati 2021/22"), 
+       previsione = c(pred2019, pred2020, pred2021),
+       realta = c(df_test$imm_totali[2:3], NA),
+       errore = realta - previsione) %>%
+  mutate_if(is.numeric, round, 1) 
+)  %>%
+  mutate(realta =as.character(realta)) %>%
+  mutate(errore = as.character(errore))
+
+df_pred[3,3] = "?"
+df_pred[6,3] = "?"
+        
+df_pred[3,4] = paste(round(low.bound,2), "-", round(upp.bound,2))
+df_pred[6,4] = paste(low.pred,"-", upp.pred)
+
+df_pred%>%
+knitr::kable(caption = "Previsione Immatricolati con Modello AR(1)") %>%
+kableExtra::kable_classic() %>% 
+kable_styling() %>%
+  row_spec(c(5,6), bold = T, color = "black", background = "yellow", font_size = 13)  
+
+
+```
+
+
+Risulta molto soddisfacente vedere che pur non considerando nessun effetto Covid19, e **non utilizzando nelle stime alcun dato nè sul 2019 nè sul 2020**, nel 2018 avremmo potuto fare una stima abbastanza precisa della situazione attuale. La previsione del 2019 risulta minore e soggetta ad un errore più elevato. Abbiamo voluto aggiungere anche una **previsione** ottenuta con il nostro modello per l'**anno accademico 2021/2022**: prevediamo tra i **324mila e i 339mila immatricolati** con un intervallo di confidenza pari al 90%. Possiamo affermare che in ambito previsivo il secondo modello si rivela quello piu utile essendo in grado di fornire una stima approssimativa conoscendo solo i dati sugli immatricolati. 
+
+Per valutare la bontà di adattamento del modello autoregressivo nel suo complesso possiamo fare un confronto tra i valori previsti (in rosso) e i valori reali: 
+
+```{r, Previsione Modello Autoregressivo, echo=TRUE}
+
+
+tibble(
+   anno_acc = df_model$anno[-c(1,2)],
+   empiric  = df_model$imm_totali[-c(1,2)],
+   prediction = (1+predict(modello_ar1, newdata = df_model)[-c(1,2)]/100)*df_model$lag1_immatricolati[-c(1,2)],
+   lower_bound = (1 + as.vector(confint(modello_ar1, level = 0.99)[,1] %*% t(model.matrix(var_immatricolati~lag1_var_immatricolati, df_model)))/100)*df_model$lag1_immatricolati[-c(1,2)],
+   upper_bound = (1+ as.vector(confint(modello_ar1, level = 0.99)[,2] %*% t(model.matrix(var_immatricolati~lag1_var_immatricolati, df_model)))/100)*df_model$lag1_immatricolati[-c(1,2)]
+ ) %>%
+  filter(anno_acc > 1965) %>%
+   ggplot() +
+   geom_line(aes(anno_acc, empiric/1000, group = 1), size = 0.8, alpha = 0.5)+
+   geom_line(aes(anno_acc, prediction/1000, group = 1), col = "red", size = 1, alpha = 0.8) +
+   xlab("Anno Accademico")+
+   ylab("Immatricolati (migliaia)")+
+   ggtitle("Previsione Immatricolati: Valori Reali vs Previsti", subtitle = "Modello Autoregressivo")+
+   ggthemes::theme_solarized() +
+  theme(axis.text.x = element_text(angle = 0, face = "bold"), 
+        axis.text.y = element_text(face = "bold"), 
+        axis.title  = element_text(face = "bold"),
+        plot.title  = element_text(face = "bold"),
+        plot.subtitle = element_text(face = "italic"),
+        plot.caption = element_text(face = "italic"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_line(colour="grey60", linetype="dotted"),
+        legend.position = "none" ) +
+  labs(caption = "Fonte: Rielaborazione dati Istat, Miur Open Data") + 
+  scale_x_continuous(breaks = c(1965, 1970, 1975, 1980, 1985, 1990, 1995, 2000, 2005, 2010, 2015, 2020))
+
+
+```
+
+Nel complesso l'adattamento del modello autoregressivo è migliorata rispetto al modello precedente che utilizzava i diplomati, seppur la stima è ancora soggetta ad un errore elevato. 
+
+- Nel **1993** quest modello è molto più *preciso* di quello con i diplomati, avvicinandosi di molto alla realà.
+
+- Dal 2010 e nel 2018, il modello prevede quasi perfettamente il numero di immmatricolati. 
+
+- Tuttavia le *inversioni di trend* si presentano con un leggero ritardo. 
+
+
+# 4. Le Riforme nelle Universita Italiane
+
+Come abbiamo fatto notare nell'introduzione, nel corso degli anni si sono susseguiti eventi e riforme che hanno potenzialmente influenzato le immatricolazioni. Dopo aver costruito due modelli, ne creeremo un terzo con lo scopo di provare a *misurarne* l'impatto.
+
+## La Ricerca di Variabili aggiuntive {.tabset}
+
+Abbiamo deciso di costruire artificialmente delle nuove variabili per rispecchiare gli effetti delle riforme universitarie, utilizzando le *variabili dummy* e assegnando degli anni che ipotizziamo possano essere stati influenzati dalla riforma, ne provaremo a misurare l'effetto. Utilizziamo la seguente logica nell'individuazione di variabili che rispecchino gli effetti delle riforme universitarie: se nell'anno t è entrata in vigore una certa legge i suoi effetti si manifesteranno negli anni a seguire e non solo per l'anno corrente.
+Il numero di anni per cui ha effetto la legge verrà ipotizzato per ogni legge e giusticato con dei ragionamenti, dato che non è possibile darne una *giustificazione matematica*.
+
+### Riforma Berlinguer (2000) 
+
+Con il decreto del MURST del 3 novembre 1999, n. 509 venne fatto un riordino dei cicli di studio. Per quanto concerne l'ambito universitario troviamo l'introduzione della laurea triennale e della laurea specialistica.  
+Osservando il grafico delle immatricolazioni nel periodo che intercorre tra il 2000 e il 2003 si può ipotizzare che la riforma abbia avuto un impatto fortemente positivo. Ipotizziamo inoltre che questa distinzione tra triennali e magistrali abbia reso più fruibile a livello economico il conseguimento di una laurea.
+
+### Riforma Moratti (2006)
+
+Il decreto legislativo del 2006, n. 164 ha disciplinato le procedure per il conseguimento dell'idoneità scientifica nazionale, ai fini del reclutamento nel ruolo di professori universitari. Seppur questa legge non sembra direttamente connessa con le immatricolazioni, risulta comunque sintomo di una maggiore qualificazione del personale universitario. 
+
+### Decreto Brunetta (2008)
+
+Con l'inizio della Crisi del Debito Pubblico dal 2008 sono state promulgate una serie di riforme per ridurre la spesa pubblica, tra queste vogliamo rivolgere l'attenzione sul Decreto Brunetta. Questa rifoma è rivolta principalmente alle pubbliche amministrazioni, quindi comprende anche le università in quanto tali.  
+La legge n. 133 del 6 agosto 2008 (o Decreto Brunetta) ha portato al taglio dei finanziamenti alle universita di 1.4 miliardi per ridisegnare il  sistema di finanziamento designato dal legislatore nei primi anni novanta. 
+
+Possiamo distinguere 5 aree principali di intervento della riforma: 
+
+1) **Razionalizzazione dell'offerta formativa**.
+2) **Sviluppo della ricerca scientifica**.
+3) **Azioni per il sostegno e il potenziamento dei servizi e degli interventi a favore degli studenti**.
+2) **Sviluppo dell'internazionalizzazione**, l'implementazione di programmi erasmus e oversize.
+2) **Risorse del personale docente e tecnico-amministratico**: facendo riferimento all'articolo 46 "*Riduzione delle collaborazioni e consulenze nella pubblica amministrazione*" del Decreto Brunetta si pone un limite all'utilizzo di professori a contratto portando le università ad un progressiva diminuzione dell'utilizzo di questa tipologia di docenti. 
+
+In sostanza cosa è successo? Le università hanno perso i finanziamenti pubblici, diventando in gran parte dipendententi dalle tasse universitarie per garantire il loro funzionamento pur avendo ottenuto una forte discrezionalità nella gestione delle proprie risorse finanziarie. Quest'autonomia di gestione ha contribuito alla creazione di un clima competitivo tra gli atenei per attirare più iscritti.
+
+### Riforma Gelmini (2010) 
+
+Con l'emanazione della legge 133/2008 all'articolo 16 è prevista la facoltà di trasformazione delle università in fondazioni di diritto privato. 
+Tra i punti di maggior rilievo toccati dalla riforma citiamo: 
+
+1. L'introduzione di un sistema valutativo dei professori da parte degli studenti la cui valutazione sarà determinante per l'attribuzione
+dei fondi alle università da parte del ministero. 
+
+2. La riduzione del numero massimo di facoltà presenti in ogni ateneo, fissato da questo momento a 12, e anche una riduzione dei settori scientifico disciplinari della metà.  
+
+
+## Un modello con le Riforme Universitarie
+
+Dopo aver delineato il quadro legislativo degli ultimi 20 anni, ci siamo chiesti se fosse possibile misurare le variazioni di immatricolati in concomitanza delle riforme. Per cercare di rispondere alla nostra domanda seguiremo l'approccio utilizzato nella formulazione del modello con i diplomati, includendo delle variabili *dummy*, che avranno valore uno in determinati anni e zero in altri: 
+
+- **Riforma Berlinguer**:  effetto stimato dal 2000 al 2003.
+- **Riforma Moratti**: effetto stimato dal 2005 al 2006.
+- **Riforma Brunetta**: effetto stimato dal 2008 al 2009.
+- **Riforma Gelmini**: effetto stimato dal 2010 al 2013.
+- **CrisiIT**: è una variabile di controllo per catturare gli effetti della crisi italiana nel 2012.
+
+Dal momento che per ottenere deglie errori minori è stato stimato un modello più complesso che è in grado cogliere anche degli effetti non lineari, abbiamo deciso di riportare solo le stime delle variabili di interesse. 
+I dettagli completi sulla stima con alcuni commenti sono riportati nell'appendice. 
+
+```{r, Il Modello Completo, echo=TRUE}
+
+modello_completo = lm(var_immatricolati ~  lag1_var_diplomati  + I(lag1_var_diplomati^2)+ lag1_var_immatricolati + RiformaBerlinguer+ RiformaMoratti  + RiformaBrunetta + CrisiIT + RiformaGelmini, data = df_model)
+
+broom::tidy(modello_completo)[-c(1:4),] %>%
+  mutate(estimate = round(estimate, 3)) %>%
+  mutate_if(is.numeric, round, 2)%>%
+  select(coefficente = "term", stima = "estimate", errore = "std.error", p.value) %>%
+knitr::kable(caption = "Modello Completo: gli effetti delle Riforme") %>%
+kableExtra::kable_classic() %>% 
+kable_styling() %>%
+  row_spec(c(1,3), bold = TRUE, color = "black", background = "yellow", font_size = 13) %>%
+  row_spec(c(2,4,5),italic = TRUE,  color = "black", background = "white", font_size = 13)  
+
+```
+
+## Interpretazione dei risultati:
+
+Considerando che nella realtà l'impatto di queste riforme è influenzato da moltissimi fattori esterni sconosciuti, proveremo a dare delle interpretazioni sui coefficenti stimati, che, tuttavia, devono essere considerate con molta cautela. Inoltre è bene precisare che gli effetti stimati e le interpretazioni devono essere considereate in relazione agli anni di riferimento, volendo fare un esempio con la riforma Berlinguer potremmo dire che: **tra gli anni 2000 e 2003 (periodo in cui era stata appena emanata la riforma Berlinguer) la variazione di immatricolati è aumentata, a parità di altre condizioni, del 4,93%**. 
+
+- **La Riforma Berlinguer** sembra aver avuto un impatto positivo sulle immatricolazioni, portando, in media, per gli anni
+che vanno dal 2000 al 2003, ad un aumento del **4,93%** di immatricolazioni. L'ipotesi che la divisione in lauree triennali e magistrali possa aver avuto nel complesso un impatto significativo viene rafforzata. Inoltre la probabilità che il coefficente stimato sia *errato* è molto bassa (5%) e ci concede un certo grado di sicurezza riguardo le affermazioni fatte precedentemente. 
+
+- **La Riforma Moratti**: l'impatto della Riforma Moratti potrebbe sembrare a primo impatto negativo, dal momento che si stima una variazione negativa del **-2,46%** tra il 2005 e il 2006. Tuttavia, come anticipato nella descrizione della legge, questa riforma non ha influenzato direttamente il mondo degli studenti universitari, bensi quello dei docenti. Se consideriamo inoltre che la *probabilità di errore* è del 48%, possiamo affermare che: **non ci sono evidenze statistiche circa l'influenza della Rifoma Moratti sulle immatricolazioni**.
+
+- **La Riforma Brunetta**: le novità introdotte con questa legge sono state molteplici e hanno sicuramente influenzato il comportamento degli atenei italiani, tuttavia il periodo riguardante la riforma, coincide con quello della **Crisi del Debito Pubblico**, iniziata nel 2007. Di conseguenza, anche se la probabilità che il coefficente sia errato è del *22%*, il che non esclude completamente un'effetto della legge, è molto rischioso attribuirne il calo stimato del **-4,25%** unicamente alla riforma Brunetta.
+
+- **CrisiIT e Riforma Gelmini**: abbiamo inserito la variabile *CrisiIT*, per cercare di ridurre l'errore sulla stima per la riforma Gelmini, dato che è avvenuta in un periodo di profonda crisi economica. La riforma sembrerebbe aver avuto un impatto negativo **-2.37%**, tuttavia la probabilità di errore è molto alta (43%), di conseguenza possiamo affermare che nemmeno per la riforma Gelmini ci sono evidenze statistiche circa un effetto sulle immatricolazioni. 
+
+
+## Effetto NON-lineare dei Diplomati 
+
+Il modello completo, costruito in questo paragrafo, ha messo in risalto un fattore molto interessante che vale la pena commentare: non solo ha confermato l'impatto che ha una variazione di diplomati sulle immatricolazioni, ma ha anche messo in risalto che la relazione *reale* tra le due variabili non è lineare. 
+
+```{r, Effetto non lineare dei Diplomati }
+
+x = seq(-20,20, 0.01)
+
+ggplot()+
+  geom_line(data = tibble(x = x, y = coef(modello_completo)[2]*x + coef(modello_completo)[3]*x^2), 
+            aes(x,y), size = 1, alpha  = 1, color = "red")+
+  geom_line(data = tibble(x = x, y = coef(modello_ridotto)[2]*x), 
+            aes(x,y), size = 1, alpha  = 1, color = "black")+
+   xlab("Variazione Diplomati anno passato (%)")+
+   ylab("Variazione Immatricolati anno corrente (%)")+
+   ggtitle("Effetto non-lineare dei Diplomati", 
+           subtitle = "Effetto della variazione di diplomati: non-lineare nel Modello Completo (rosso) \n e lineare nel Modello Diplomati (nero)")+
+   ggthemes::theme_solarized() +
+  theme(axis.text.x = element_text(angle = 0, face = "bold"), 
+        axis.text.y = element_text(face = "bold"), 
+        axis.title  = element_text(face = "bold"),
+        plot.title  = element_text(face = "bold"),
+        plot.subtitle = element_text(face = "italic"),
+        plot.caption = element_text(face = "italic"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_line(colour="grey60", linetype="dotted"),
+        legend.position = "none" ) +
+  labs(caption = "Fonte: Rielaborazione dati Istat, Miur Open Data")+
+  scale_x_continuous(breaks = seq(-20,20, 5))
+
+```
+
+La relazione lineare tra le due variabili sembrerebbe valida solo intorno allo zero, quindi per piccole variazioni, mentre nel caso di 
+variazioni più consistenti la relazione diventa non-lineare. Per provare ad interpretarne le implicazioni osserviamo la curvatura della linea rossa, possiamo affermare che: 
+
+- Un **aumento elevato di diplomati** produce un **aumento meno che proporzionale** nella variazione di immatricolazioni. Volendo ottenere una prova empirica di questo fatto basta osservare le stime ottenute per il periodo che va dal 1990 al 1993 con il modello lineare del paragrafo 2. In quel periodo il numero di diplomati crebbe molto, tuttavia le immatricolazioni crebbero, ma non proporzionalmente difatti il modello *sbaglia enormemente* le previsioni. Il modello completo, utilizzando una relazione non lineare, riesce invece a *catturare* più precisamente il reale effetto dei diplomati.
+
+- Una **diminuzione drastica dei diplomati** produce una **diminuzione più che proporzionale** nella variazione di immatricolazioni.  
+
+I risultati sono molto interessanti, soprattutto se letti in chiave demografica: le previsioni per i prossimi anni indicano chiaramente una diminuzione del numero di giovani, il che si tradurrà inevitabilmente in una diminuzione del numero di diplomati. Di conseguenza, almeno stando al modello, si avrebbe un calo drastico delle immatricolazioni: **una diminuzione del 10% nel numero di diplomati provocherebbe una dimuzione del 15% circa di immatricolazioni**.
+
+## Conclusioni 
+
+1. La divisione delle lauree in triennali e magistrali sembrerebbe aver avuto un impatto consistente, ma transitorio e circorscitto al periodo 2000-2003.  
+
+2. Non sono state riscontrate evidenze circa gli effetti delle altre riforme. Tuttavia, considerando il contesto storico-politico in cui vennero emanate, possiamo presupporre che in quegli stessi anni siano presenti ulteriori fattori che possano aver influenzato la scelta dei nuovi studenti. 
+
+3. L'effetto dei diplomati sugli immatricolati è positivo e non lineare, la relazione stimata tra le due variabili può essere considerata abbastanza stabile e affidabile. Le implicazioni nella realtà come abbiamo accennato sono molteplici e destano particolari preoccupazioni riguardo al futuro.
+
+4. Non abbiamo riscontrato evidenze su effetto del Covid19 sulle immatricolazioni a livello nazionale. Se volessimo considerare la stima ottenuta per il coefficente come *valida* potremmo affermare 
+che l'impatto globale sembra essere stato positivo. Una possibile spiegazione che ci siamo dati su quest'aumento è la seguente: persone che, in una situazione normale, avrebbero preferito iniziare a lavorare una volta terminata la scuola superiore, essendosi trovate in un periodo di Lockdown, con offerte di lavoro scarse potrebbero aver deciso di iscriversi all'università. Non è da escludere che, una volta ripristinata una *situazione normale* queste persone abbandonino poi l'università, per verificare quindi se l'aumento sia stato effettivo, occorre aspettare l'anno prossimo e osservare l'evoluzione. 
+
+
+```{r, Previsione Modello Completo}
+
+R2 = glance(modello_completo)$adj.r.squared %>% round(2)
+sd_mod = glance(modello_completo)$sigma  %>% round(2)
+
+tibble(
+   anno_acc = df_model$anno[-c(1,2)],
+   empiric  = df_model$imm_totali[-c(1,2)],
+   prediction = (1+predict(modello_completo)/100)*df_model$lag1_imm_totali[-c(1,2)]
+ ) %>%
+   ggplot() +
+   geom_line(aes(anno_acc, empiric/1000, group = 1), size = 0.8, alpha = 0.5)+
+   geom_line(aes(anno_acc, prediction/1000, group = 1), col = "red", size = 1, alpha  = 0.8) +
+   xlab("Anno Accademico")+
+   ylab("Immatricolati (migliaia)")+
+   ggtitle("Valori Reali vs Valori Previsti", subtitle = "Modello Completo con Riforme")+
+   ggthemes::theme_solarized() +
+  theme(axis.text.x = element_text(angle = 0, face = "bold"), 
+        axis.text.y = element_text(face = "bold"), 
+        axis.title  = element_text(face = "bold"),
+        plot.title  = element_text(face = "bold"),
+        plot.subtitle = element_text(face = "italic"),
+        plot.caption = element_text(face = "italic"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_line(colour="grey60", linetype="dotted"),
+        legend.position = "none" ) +
+  labs(caption = "Fonte: Rielaborazione dati Istat, Miur Open Data") + 
+  scale_x_continuous(breaks = c(1965, 1970, 1975, 1980, 1985, 1990, 1995, 2000, 2005, 2010, 2015, 2020))
+
+```
+
+
+
+
+
+
+
+
+# 5. Analisi sui Fuorisede per Regione
+
+## La Didattica a Distanza e i Fuorisede {.tabset} 
+
+Uno dei temi piu discussi e dibattuti quest'anno, in ambito scolastico-universitario, è stato quello della **didattica a distanza**, comunemente chimata con l'acronimo **DAD**. 
+All'inizio della pandemia, quando io e la mia compagna ci siamo trovati di fronte a questo nuovo modo di fare lezione abbiamo avuto due opinioni discordanti. 
+
+- **B**: "*Io, sono stato entusiasta di questo nuovo modo di fare lezione: non essendo mai stato un frequentante modello, la possibilità di poter seguire le lezioni con un approccio più rilassato e senza essere vincolato alla presenza fisica in università ha migliorato il mio modo di studiare e mi ha permesso di avere una maggiore efficinza nell'organizzazione del tempo. Il vantaggio principale di questa situazione, almeno per me, è stato quello delle registrazioni delle lezioni*".  
+
+- **M**: "*Io ho apprezzato un pò meno la didattica a distanza, in quanto mi ha dato meno possibilità di confronto con i miei compagni di università, non avendo più l'opportunità di discutere dei casi studiati a lezione e dei vari approcci alla materia. Secondo me **sono diminuiti anche i vari stimoli esterni che l'ambiente universitario favoriva**. Per quanto riguarda gli esami, essendo una persona molto ansiosa prediligo senz'altro questa modalità che mi permette di svolgerli in un ambiente a me più familiare*".
+
+In questa parte dell'analisi andremo ad esaminare, gli aspetti legati alla tematica dei fuorisede, cercando di capire quale sia stato l'effettivo comportamento degli studenti cercando di capire se *l'emigrazione dalle regioni di residenza (anche virtuale) sia diminuita o meno.*
+
+In quest' [articolo](https://www.ilsole24ore.com/art/universita-affitti-calo-e-stanze-vuote-tre-case-ogni-studente-ADztZSl) pubblicato dal Sole 24 ore a settembre del 2020, si preannunciava un **calo nella domanda di affitti**, soprattutto nelle **città universitarie**, il che era plausibile dal momento che le difficoltà di spostamento presenti nel 2020 hanno probabilmente disincentivato i ragazzi dal trasferirsi. Tuttavia l'**aspetto più interessante** di questa situazione è capire se il fatto di **non essere vincolati ad un luogo** ha, di fatto, **ampliato** le **possibilità** di scelta come ci si immagina.
+
+
+## Variazione di immatricolati a livello Regionale {.tabset}
+
+In primis cercheremo di stilare una *classifica* delle regioni in base alla variazione globale di immatricolazioni nel 2020/21 per delinearne un quadro generale. Come possiamo vedere dal grafico seguente, le variazioni a livello regionale mostrano dei possibili effetti della pandemia che andremo ad esaminare nel corso dell'articolo. Le regioni che nel 2021 hanno registrato una **variazione positiva** sono state prevalentemente quelle del **Centro-Sud**, ad *eccezione* del *Veneto* e della *Liguria*. Contrariamente le regioni del **Nord** hanno presentato una **variazione molto bassa o negativa**. 
+
+```{r, Grafico a Barre Variazione totale di Immatricolati per regione, echo=FALSE}
+
+
+df_rank = select(df_emigrazioni, Regione = "regione", Variazione = "var_totale") %>%
+  arrange(desc(Variazione)) %>% 
+  mutate(Variazione = round(Variazione, 2), 
+         Effetto = ifelse(Variazione >=0,"Positivo", "Negativo"))  
+
+df_rank %>%
+  mutate(
+    Regione = case_when(
+      Regione == "TRENTINO ALTO ADIGE" ~ "TRENTINO",
+      Regione == "FRIULI VENEZIA GIULIA" ~ "FRIULI",
+      TRUE ~ Regione
+    )
+  ) %>%
+ggplot(aes(Variazione, reorder(Regione, Variazione), fill = Effetto)) +
+  geom_bar(stat = "identity", colour = "black", width = 0.8) +
+  scale_x_continuous(breaks = c(-5, 0, 5, 10, 20, 30, 40)) +
+    ggthemes::theme_solarized() +
+  scale_fill_manual(values = c("#F58772", "#B7F28D"))+
+  xlab("Variazione di Immatricolati (%)")+
+  ylab("")+
+  ggtitle("Variazione di Immatricolazioni a livello Regionale", subtitle = "Anni Accademici: 2019/2020 - 2020/2021")+
+ theme(axis.text.x = element_text(angle = 0, face = "bold"), 
+        axis.text.y = element_text(face = "bold"), 
+        axis.title  = element_text(face = "bold"),
+        plot.title  = element_text(face = "bold"),
+        plot.subtitle = element_text(face = "italic"),
+        plot.caption = element_text(face = "italic"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_line(colour="grey60", linetype="dotted"),
+        legend.position = "none" ) +
+  labs(caption = "Fonte: Miur Open Data") 
+
+```
+
+
+Il passo successivo è riuscire a comprendere se gli studenti sono stati effettivamene disincentivati a spostarsi. Per evidenziare quest'aspetto abbiamo deciso di ossrervare solo gli **immatricolati residenti**, ovvero *coloro che si immatricolano in un ateneo nella regione di residenza*, confrontando la differenza tra le variazioni percentuali tra il 2019/20 e il 2020/21, in tal modo possiamo capire quali siano le  **regioni** che hanno **perso** "*potenziali*" **immatricolati residenti** nel **2021**. 
+
+```{r, Grafico Variazione Residenti Immatricolati}
+
+df_emigrazioni %>%
+  mutate(`Variazione Residenti` = (residenti_2021-residenti_1920)/residenti_1920*100, 
+         var = ifelse(`Variazione Residenti`>0,"Pos","Neg"))%>%
+  mutate(
+    regione = case_when(
+      regione == "TRENTINO ALTO ADIGE" ~ "TRENTINO",
+      regione == "FRIULI VENEZIA GIULIA" ~ "FRIULI",
+      TRUE ~ regione
+    )
+  ) %>%
+  ggplot(aes(`Variazione Residenti`, reorder(regione, `Variazione Residenti`), fill = var)) +
+  geom_bar(stat = "identity",  width = 0.8,   col = "black")+
+  xlab("Differenza Variazione (%)")+
+  ylab("")+
+  ggtitle("Si sono immatricolati più residenti nel 2021?", subtitle = "Differenza tra le variazioni percentuali di immatricolati residenti \n tra il 2019/20 e il 2020/21.")+
+  ggthemes::theme_solarized() +
+  scale_x_continuous(breaks = seq(-10, 15, 5)) +
+  scale_fill_manual(values = c("#F58772", "#B7F28D"))+
+  theme(axis.text.x = element_text(angle = 0, face = "bold"), 
+        axis.text.y = element_text(face = "bold"), 
+        axis.title  = element_text(face = "bold"),
+        plot.title  = element_text(face = "bold"),
+        plot.subtitle = element_text(face = "italic"),
+        plot.caption = element_text(face = "italic"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_line(colour="grey60", linetype="dotted"),
+        legend.position = "none" ) +
+  labs(caption = "Fonte: Miur Open Data") 
+
+```
+
+Ora la dinamica delle immatricolazioni risulta piu chiara e possiamo vedere come **nel complesso gli studenti si siano spostati di meno rispetto al 2019/20**, il che sembrerebbe strano dato che il fatto di non essere vincolati al trasferimento dovrebbe ampliare, almeno in teoria, le possibilità di scelta. Possiamo individuare due gruppi di regioni: 
+
+1. Il primo gruppo (in verde) è composto da regioni che hanno presentato un aumento di studenti residenti immatricolati, quindi che sono riuscite a *trattenere* i propri ragazzi.
+
+2.  Il secondo gruppo (in rosso) è composto da regioni che hanno presentato una diminuzione di studenti residenti immatricolati, sono quindi regioni che hanno *perso* possibili immatricolazioni. Tuttavia il fatto che siano presenti variazioni negative ci lascia intendere che alcuni studenti hanno comunque preferito *spostarsi*, anche se virtualmente, in una regione differente.  
+
+
+## Indicatori Regionali
+
+Per completare il quadro a livello regionale occore caratterizzare le regioni non solo in base agli studenti che acquisiscono, ma anche a quelli che *perdono*. Partendo dalle variazioni globali di immatricolati per regione, abbiamo deciso di calcolare una serie di indicatori che ci possano aiutare ad effettuare dei confronti a livello regionale e fornire delle informazioni in grado di spiegare le variazioni di quest'anno. 
+Con i confronti vorremmo cercare di comprenderne due aspetti fondamentali: 
+
+1. Quali sono le regioni che hanno un **bilancio** tra studenti in entrata e in uscita **negativo** nel 2021? Quali invece, positivo?
+
+2. Quali sono le regioni con un'elevata emigrazione?
+
+
+Gli indicatori calcolati a livello regionale sonoi seguenti: 
+
+- **Variazione Studenti Fuorisede**: rappresenta l'aumento/diminuzione percentuale di studenti che si sono *immatricolati nella regione avendo la residenza in una regione differente*.
+
+- **Variazione Studenti Emigrati**: rappresenta l'aumento/diminuzione percentuale di studenti che essendo *residenti nella regione, si sono immatricolati in altre regioni*.
+
+- **Fuorisede/Totale**: è il rapporto tra il numero di fuorisede immatricolati e il totale di immatricolati nella regione.
+
+- **Emigrati/Residenti**: è il rapporto tra il numero studenti residenti che si immatricola altrove e il numero di studenti residenti che si immatricola nella regione. Il caso in cui questo indicatore è maggiore 100%, indica che l'emigrazione dalla regione è nettamente maggiore del numero di giovani che restano. Se lo utilizziamo insieme al rapporto dei fuorisede sul totale possiamo subito capire quale sia la dinamica regionale, ovvero se quanti studenti lasciano la regione, quanti restano e quanti arrivano da fuori rispetto al totale.  
+
+- **Immigrati/Residenti**: è il rapporto tra il numero studenti fuorisede che si immatricola nella regione e il numero di studenti residenti che si immatricola nella regione. Nel caso in cui nella regione si immatricolino molti fuorisede, e allo stesso tempo si immatricolano meno residenti, l'indice assumerà un valore maggiore di 100.
+
+- **Bilancio 2021**: è dato dalla differenza (in termini assoluti) tra il numero di studenti fuorisede e il numero di studenti emigrati.
+
+Per facilitare la visione complessiva degli indicatori, abbiamo deciso di costruire una mappa interattiva, in cui ciascun indice può essere visualizzato cliccando sulla regione di interesse. Il colore delle regioni rispecchia le variazioni globali di immatricolazioni nel 2020/21.
+
+```{r, Mappa Variazione Regionale, echo=TRUE}
+
+#green.scale = c("#E4F2DA", "#D6F2C2", "#C8F2AA", "#BAF291", "#ACF279", "#9DF261", "#8FF249", "#81F230", "#73F218", "#65F200")
+#red.scale   = c("#F5E0DC", "#F5CCC4", "#F5B8AB", "#F5A393", "#F58F7A", "#F57A62", "#F56649", "#F55231", "#F53D18", "#F52900")
+
+bins <- c(-10, -5, -2.5, -1,  -0.5, 0, 5, 10, 20, 40, 60)
+mypalette = c("#E60400", "#E6312E", "#E65E5C","#E6807E", "#E6918A","#C8F2AA", "#ACF279","#88E645", "#6DE617","#6AFF00")
+
+pal = colorBin(  palette=mypalette, domain = df_emigrazioni$var_totale, bins = bins)
+
+labels = paste0("<b>", df_emigrazioni$regione, 
+                 "</b>", "<br/>", "Variazione Immatricolati tra il 2019/20 e il 2020/21 ", "<b>",  round(df_emigrazioni$var_totale, 2), " %<b/>",
+                 "</b>", "<br/>", "Variazione Fuorisede: ", "<b>",  round(df_emigrazioni$var_fuorisede, 2), " %<b/>",
+                 "</b>", "<br/>", "Fuorisede/Totale: ", "<b>",  round(df_emigrazioni$immigrati_2021/df_emigrazioni$totale_2021*100, 2), " %<b/>",
+                 "</b>", "<br/>", "Variazione Studenti Emigrati: ", "<b>",  round(df_emigrazioni$var_emigrati, 2), " %<b/>", 
+                 "</b>", "<br/>"," Emigrati/Residenti: ", "<b>",  round(df_emigrazioni$emigrati_2021/df_emigrazioni$residenti_2021*100, 2), " %<b/>",
+                 "</b>", "<br/>","Immigrati/Residenti: ", "<b>",  round(df_emigrazioni$immigrati_2021/df_emigrazioni$residenti_2021*100, 2), " %<b/>",
+                 "</b>", "<br/>","Bilancio 2021: ", "<b>",  round(df_emigrazioni$bilancio2021, 2), " studenti. <b/>"
+                 ) %>% lapply( htmltools::HTML)
+
+map1 = base_map %>%
+  addPolygons(
+  popup = labels,
+  fillColor = ~pal(df_emigrazioni$var_totale),
+  weight = 2,
+  opacity = 1,
+  color = "white",
+  dashArray = "3",
+  fillOpacity = 0.7,
+  labelOptions = labelOptions(
+      style = list("font-weight" = "normal", padding = "3px 8px"),
+      textsize = "10px",
+      direction = "auto"),
+  
+  highlight = highlightOptions(
+    weight = 5,
+    color = ~"#E8A025",
+    dashArray = "",
+    fillOpacity = 0.7,
+    bringToFront = TRUE))
+
+map1 %>% 
+    addLegend(pal = pal, values = ~df_emigrazioni$var_totale, opacity = 0.7, title = "Var. Immatricolati 2019-21",
+                                       position = "topright") %>% 
+  addMeasure(
+    position = "bottomleft",
+    primaryLengthUnit = "kilometers",
+    primaryAreaUnit = "sqmeters",
+    activeColor = "#3D535D",
+    completedColor = "#7D4479")
+
+```
+
+
+
+## I Bilanci del 2021
+
+1. **Quali sono le regioni che hanno un bilancio tra studenti in entrata e in uscita negativo nel 2021?** Il grafico evidenzia come la maggior parte delle regioni con **bilancio negativo** si trovi nel CENTRO-SUD, con alcune eccezioni come la Campania e il Lazio. Il Veneto è l'unica regione del nord d'Italia a presentare un bilancio fortemente negativo, ad indicare una forte emigrazione di giovani dalla regione. L'**Emilia Romagna** è la regione che presenta il bilancio maggiore, come possiamo notare dagli indicatori calcolati nel 2021 la percentuale di residenti emigrati è stata circa del 20%, inoltre rispetto al 2019, sono emigrati più studenti, circa il 25% in più rispetto all'anno precedente. L'Emilia è tradizionalmente una regione fortemente dipendente dalle immatricolazioni di fuorisede, nel 2021 il 40% degli studenti iscritti in Emilia Romagna proviene da altre regioni.  
+
+
+
+```{r}
+
+df_emigrazioni %>%
+  mutate(Bilancio = bilancio2021, 
+         var = ifelse(Bilancio >0,"Pos","Neg"))%>%
+  mutate(
+    regione = case_when(
+      regione == "TRENTINO ALTO ADIGE" ~ "TRENTINO",
+      regione == "FRIULI VENEZIA GIULIA" ~ "FRIULI",
+      TRUE ~ regione
+    )
+  ) %>%
+  ggplot(aes(Bilancio, reorder(regione, Bilancio), fill = var)) +
+  geom_bar(stat = "identity",  width = 0.8,   col = "black")+
+  xlab("Bilancio (valore assoluto)")+
+  ylab("")+
+  ggtitle("Il Bilancio delle immatricolazioni nel 2021", subtitle = "Il bilancio è stato calcolato come differenza tra \n gli immatricolati residenti e gli immatricolati fuorisede.")+
+  ggthemes::theme_solarized() +
+  scale_x_continuous(breaks = seq(-6000, 10000, 2000)) +
+  scale_fill_manual(values = c("#F58772", "#B7F28D"))+
+  theme(axis.text.x = element_text(angle = 0, face = "bold"), 
+        axis.text.y = element_text(face = "bold"), 
+        axis.title  = element_text(face = "bold"),
+        plot.title  = element_text(face = "bold"),
+        plot.subtitle = element_text(face = "italic"),
+        plot.caption = element_text(face = "italic"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_line(colour="grey60", linetype="dotted"),
+        legend.position = "none" ) +
+  labs(caption = "Fonte: Miur Open Data") 
+
+```
+
+
+## Da dove viene chi si iscrive in...? {.tabset}
+
+Ora possiamo procedere con la nostra analisi andando ad esaminare da dove provengano gli studenti che si immatricolano in ogni regione. In alcuni casi abbiamo individuato dei fattori che possano aiutarci a ipotizzare il perchè degli spostamenti. Cliccando sul nome della regione è possibile visualizzare, i grafici che riportano le regioni da cui provengono e quelle in cui vanno gli studenti della regione considerata. 
+
+### Abruzzo
+
+```{r, Immatricolati in Abruzzo per Regione, warning=FALSE, message=FALSE}
+
+immigration_map("Abruzzo", articolo = "in")
+
+```
+
+Nel complesso l'**Abruzzo** ha registrato una diminuzione di immatricolazioni (-1,8%), inoltre è stata una delle poche regioni da cui gli studenti sono continuati ad emigrare anche nel 2020. Inoltre è possibile notare che: 
+
+- Coloro che si iscrivono in Abruzzo provengono prevalentemente dal Centro-Sud.
+- Coloro che emigrano dall'Abruzzo si dirigono al Centro-Nord prediligendo Lazio, Emilia e Marche.
+
+Il **bilancio** della regione nel complesso è stato **negativo** (-700 studenti), con una diminuzione dei fuorisede iscritti nella regione del *1,8%*.
+
+
+```{r, Emigrati in Abruzzo per Regione, warning=FALSE, message=FALSE}
+
+emigration_map("Abruzzo", articolo = "in")
+
+```
+
+
+### Basilicata
+
+Dal momento che il grafico delle immigrazioni in **Basilicata** non è particolarmente rappresentativo abbiamo deciso di riportare solo le percentuali delle regioni coinvolte: 
+i fuorisede iscritti in Basilicata provengono da Campania (31,2%), Puglia (61,8%) e Calabria (7%). 
+
+I residenti in Basilicata invece emigrano in tutt' Italia ad eccezione di Sicilia e Sardegna. La meta principale è la Puglia, seguita da Campania ed Emilia-Romagna. 
+Nel 2021 il numero di studenti emigrati è aumentato del 4% rispetto al 2019, ad indicare che, nonostante la pandemia, i ragazzi hanno deciso comunque di iscriversi al di fuori della regione. Il rapporto di emigrati su immatricolati residenti è del 300% ovvero **per 3 studenti che emigrano dalla regione uno solo si iscrive in Basilicata**.
+
+```{r, Emigrati dalla Basilicata per Regione, warning=FALSE, message=FALSE}
+
+emigration_map("Basilicata", articolo = "in")
+
+```
+
+
+### Calabria 
+
+```{r, Immatricolati in Calabria per Regione, warning=FALSE, message=FALSE}
+
+immigration_map("Calabria", articolo = "in")
+
+```
+
+Per quanto riguarda le immigrazioni in **Calabria**, abbiamo voluto riportarne il grafico per mostrare un dato *apparentemente* anomalo: un numero molto elevato di studenti fuorisede che dall'Emilia-Romagna si immatricolano in Calabria (76%). Il bilancio della regione è negativo e molto elevato (-3461 studenti) ad indicare una forte propensione ad abbandonare la regione con il 60% di studenti emigrati rispetto agli iscritti residenti, tuttavia il bilancio risulta negativo per l'assenza di studenti immigrati in Calabria: solo il 3,7% degli studenti immatricolati in Calabria provengono al di fuori della regione. 
+
+Inoltre gli studenti residenti potrebbero aver continuato ad iscriversi al di fuori della regione perchè incentivati dalla Calabria stessa che, per il 2021, ha messo a disposizione una serie di [contributi per gli studenti](https://www.regione.calabria.it/website/portaltemplates/view/view.cfm?19796) iscritti in atenei al di fuori della regione. 
+
+
+
+```{r, Emigrati dalla Calabria per Regione, warning=FALSE, message=FALSE}
+
+emigration_map("Calabria", articolo = "in")
+
+```
+
+
+### Campania
+
+```{r, Immatricolati in Campania per Regione, warning=FALSE, message=FALSE}
+
+immigration_map("Campania", articolo = "nel")
+
+
+```
+
+La **Campania** nel complesso ha registrato un bilancio, per il 2020/21, tra entrate e uscite positivo. La regione ha presentato una diminuzione di studenti emigrati del *-3,7%*, sembrerebbe quindi che i residenti abbiano preferito restare nella regione. Tuttavia è bene considerare che il rapporto tra emigrati e residenti è molto basso (12%), tuttavia anche quello di immigrati su residenti (17%).
+Nel complesso potremmo affermare che:
+
+- La Campania è una regione dalla quale i ragazzi non sono proprensi ad andarsene, allo stesso tempo risce ad attirare studenti da quasi tutte le regioni.
+
+- La *quantità* di immigrati, tuttavia, è molto piccola rispetto al totale di immatricolazioni nella regione, essendo solo il 15%.  
+
+
+```{r, Emigrati in Campania per Regione, warning=FALSE, message=FALSE}
+
+emigration_map("Campania", articolo = "nel")
+
+
+```
+
+
+### Emilia 
+
+```{r, Immatricolati nel Emilia per Regione, warning=FALSE, message=FALSE}
+
+immigration_map("Emilia Romagna", articolo = "in")
+
+```
+
+
+L'**Emilia-Romagna** è la regione che ha presentato nel 2020/21 il bilancio più elevato, riuscendo ad attirare un numero molto elevato di studenti da tutt'Italia: il 40% degli studenti in Emilia-Romagna provengono al di fuori della regione, con contributi maggiori da Veneto, Lombardia e Puglia. I residenti in Emilia Romagna sembrano aver preferito spostarsi quest'anno, si è verificato infatti un aumento di emigrati dalla regione del 25%, le mete preferite sono state pricipalmente la Lombardia, le Marche e il Veneto. 
+
+```{r, Emigrati dal Emilia per Regione, warning=FALSE, message=FALSE}
+
+emigration_map("Emilia Romagna", articolo = "in")
+
+```
+
+
+### Friuli 
+
+Gli immatricolati in **Friuli** provengono principalmente dal Veneto (93,6%); il restante 7% è suddiviso tra Lombardia (0.94%), Puglia (2,49%), Sicilia (1,64%) e Trentino (1,33%). Le mete di studio degli studenti friulani sono state soprattutto le regioni confinanti: Veneto, Lombardia ed Emilia. La restante parte degli studenti emigrati nel 2020/21 si è diretta in Campania e Lazio. Nel complesso è una regione abbastanza bilanciata con una piccola parte di emigrazioni (31%), quasi del tutto compensata da immigrazioni (29%). Nel 2021 si sono immatricolati il 4% di studenti fuorisede in più nella regione, tuttavia il rapporto di fuorisede sul totale è del 23%, di conseguenza essendo molto basso possiamo intuire come la maggior parte delle immatricolazioni sia costituita da residenti. 
+
+
+```{r, Emigrati dal Friuli per Regione, warning=FALSE, message=FALSE}
+
+emigration_map("Friuli Venezia Giulia", articolo = "in")
+
+```
+
+
+### Lazio
+
+```{r, Immatricolati nel Lazio per Regione, warning=FALSE, message=FALSE}
+
+immigration_map("Lazio", articolo = "nel")
+
+```
+
+Il **Lazio** è una delle regioni che presenta il numero maggiore di atenei e quindi di possibilità di scelta, tuttavia la maggior parte dei suoi immatricolati sono residenti (80%) e solo una piccola parte sono fuorisede. Nel complesso il Lazio sembra essere una regione in grado di trattenere i propri studenti, e allo stesso di attirarne anche una parte dalle altre regioni. Il rapporto di emigrati su residenti è del 10% ed è decisamente contenuto, tuttavia nel 2020/21 le emigrazioni sono aumentate del 4,8% ad indicare comunque una propensione a spostarsi. La meta preferita per i ragazzi residenti in Lazio è stata la Lombardia, seguita da Campania, Marche e Umbria.   
+
+
+```{r, Emigrati dal Lazio per Regione, warning=FALSE, message=FALSE} 
+
+emigration_map("Lazio", articolo = "nel")
+
+```
+
+### Liguria 
+
+```{r, Immatricolati in Liguria per Regione, warning=FALSE, message=FALSE}
+
+immigration_map("Liguria", articolo = "in")
+
+```
+
+La **Liguria** è stata una delle regioni con la variazione maggiore di immatricolazioni nel 2020/21, registrando un **+21%**. 
+L'università di Genova, ha deciso di [tagliare le tasse](https://press.regione.puglia.it/-/azzerate-le-tasse-universitarie-per-chi-si-trasferisce-da-un-ateneo-fuori-regione#) per il 2020/21: sotto i 24000 di Isee si viene esonerati completamente, mentre è stato stabilito un'esonero parziale tra i 24000 e i 30000 euro di ISEE. 
+La regione sembra essere riuscita ad attirare nuovi studenti soprattutto da Piemonte, Lombardia e Toscana, inoltre vale la pena osservare che si sono immatricolati studenti anche da Veneto, Puglia, Campania ed Emilia Romagna, regioni da cui, nel 2019/20, non proveniva alcun studente. Nel complesso la Liguria ha presentato comunque un bilancio negativo (-764 studenti), con rapporto di emigrazione molto elevato (32%), non compensato dalle immigrazioni che sono solo il 18% dei residenti iscritti. L'incremento di immatricolazioni del 2020/21 può essere ricondotto quasi completamento ad una variazione anomala di immigrazioni nella regione che quest'anno ha registrato **+89%* rispetto all'anno precedente. 
+
+```{r, Emigrati dalla Liguria per Regione, warning=FALSE, message=FALSE}
+
+emigration_map("Liguria", articolo = "in")
+
+```
+
+
+### Lombardia
+
+```{r, Immatricolati in Lombardia per Regione, warning=FALSE, message=FALSE}
+
+immigration_map("Lombardia", articolo = "in")
+
+```
+
+La **Lombardia**, che nel complesso presenta un bilancio comunque positivo (+6286 studenti), nel 2020/21 ha subito una diminuzione di immatricolazioni. Le perdite di immatricolazioni si possono ricondurre ad un calo nel numero di fuorisede provenienti prevalentemente dal Sud, le uniche regioni del Nord da cui si sono immatricolati piu studenti sono il Piemonte e l'Emilia-Romagna. Questa diminuazione complessiva può venir ricondotta a due fattori: 
+
+- Una variazione molto bassa di immatricolati fuorisede che nel 2020/21 sono aumentati solo del 2%. 
+- Un'aumento nell'emigrazione di studenti residenti (+20%) che sono andati a studiare altrove: principalmente in Emilia, Piemonte, Veneto e Lazio.
+
+Globalmente gli effetti di questi cambiamenti si sono tradotti in una dimuzione di immatricolazioni a livello regionale dell 1,1%. 
+
+
+```{r, Emigrati dalla Lombardia per Regione, warning=FALSE, message=FALSE}
+
+emigration_map("Lombardia", articolo = "in")
+
+```
+
+### Marche
+
+```{r, Immatricolati nelle Marche per Regione, warning=FALSE, message=FALSE}
+
+immigration_map("Marche", articolo = "nelle")
+
+```
+
+Le **Marche** hanno registrato nel complesso una variazione negativa di *-0,86%* che ha portato il bilancio ad essere leggermente negativo (-62 studenti). Osservando le variazioni di emigrati e immigrati possiamo notare che nel 2020/21 sono aumentati le emigrazioni (7%) e sono diminuite le immigrazioni da altre regioni (-3%). I rapporti di studenti emigrati sul immatricolati resideni (36%) e di immigrazione (37%) sono abbastanza simili e non indicano uno squilibrio particolare tra i due flussi, tuttavia è bene notare che gli studenti fuorisede nelle Marche sono solo il 26% del totale. 
+
+
+```{r, Emigrati dalle Marche per Regione, warning=FALSE, message=FALSE}
+
+emigration_map("Marche", articolo = "nelle")
+```
+
+### Molise
+
+Gli studenti che sono andati a studiare in **Molise** nel 2021 provengono principalmente da: Puglia (39%), Campania (53,5%), Lazio (2,7%) e Abruzzo (4,8%), tuttavia il numero dei fuorisede è diminuito nel 2020 del 4%. Le emigrazioni riguardano quasi tutte le regioni del Centro-Nord, con una forte propensione degli studenti ad emigrare, **in media per ogni due studenti che si immatricolano, tre ne emigrano** portando il bilancio ad essere negativo (-485 studenti).
+
+```{r, Emigrati dal Molise per Regione, warning=FALSE, message=FALSE}
+
+emigration_map("Molise", articolo = "in")
+```
+
+### Piemonte
+
+```{r, Immatricolati in Piemonte per Regione, warning=FALSE, message=FALSE}
+
+immigration_map("Piemonte", articolo = "in")
+
+```
+
+Il **Piemonte** ha registrato un aumento di immatricolazioni del **+3,6%**: si è verificato un'aumento considerevole di studenti provenienti dalla Lombardia e allo stesso tempo si è verificato un calo negli immatricolati provenienti da Sicilia e Puglia. Un'aspetto che vale la pena evidenziare che in Piemonte, per il 2020/21, sono stati stanziati dei fondi straordinari, con un'incremento di 40 milioni di euro per gli studenti meritevoli esclusi dalla graduatoria regionale. Dal momento che le borse di studio stanziate, variano in base alla provenienza e dal momento che i ragazzi residenti in Lombardia potrebbero beneficiare della borsa di valore massimo, essendo considerati fuorisede, potremmo vedere in quest'iniziativa un incentivo per studenti meritevoli a studiare in Piemonte. 
+
+
+```{r, Emigrati dal Piemonte per Regione, warning=FALSE, message=FALSE}
+
+emigration_map("Piemonte", articolo = "in")
+
+```
+
+
+### Puglia
+
+La regione **Puglia** ha deciso di [azzerare le tasse](https://bari.repubblica.it/cronaca/2020/06/12/news/niente_tasse_per_i_fuorisede_che_ritornano_a_studiare_nelle_universita_pugliesi-259030120)
+L’incentivo consiste nel riconoscere alle studentesse e agli studenti iscritti in atenei fuori regione nell’anno accademico 2019-20, che decidano di trasferirsi in una università pugliese per l’anno accademico 2020-21, di non pagare la tassa regionale per il diritto allo studio universitario e le tasse universitarie. L'incentivo è riuscito ad attirare studenti fuorisede, che nel 2020/21 sono aumentati del 14%, prevalentemente dalla Basilicata (86% dei fuorisede), in minima parte Campania (3,65%) e Calabria (5,47%), la restante parte è suddivisa equamente tra Emilia-Romagna (1,99%) e Liguria (1,99%). 
+Il bilancio della regione rimane pesantemente negativo (-6438 studenti), presentanto un'emigrazione elevata (45%) se comparata all'immigrazione che è appena del 3%. 
+
+
+```{r, Emigrati in Puglia per Regione, warning=FALSE, message=FALSE}
+
+emigration_map("Puglia")
+
+```
+
+
+### Sardegna
+
+La **Sardegna** ha presentato zero immatricolati provenienti da altre regioni, allo stesso tempo presenta un'emigrazione del 13% rispetto agli studenti residenti, nel 2020/21 l'emigrazione è aumentata del 15%. Nel complesso questa situazione porta la regione ad avere un bilancio negativo (-865 studenti), dal momento che la variazione globale di immatricolati è positiva (+3%), possiamo affermare che quest'anno si sono immatricolati in media più studenti in Sardegna rispetto all'anno passato: 6357 studenti nel 2019, contro 6550 studenti nel 2020/21. Possiamo concludere che, in Sardegna, l'aumento delle emigrazioni, almeno quest'anno, è stato compensato da un aumento degli iscritti residenti. 
+
+```{r, Emigrati dalla Sardegna per Regione, warning=FALSE, message=FALSE}
+
+emigration_map("Sardegna")
+
+```
+
+### Sicilia
+
+Complessivamente la **Sicilia** ha presentato nel 2020/21 una aumento del 11,7% nel numero di immatricolati. Osservando le variazioni possiamo notare come questa variazione sia stata causata da una diminuzione dell'emigrazione dalla regione (-0,2%) a cui è seguito un'aumento massiccio di immigrazioni (+20%), tuttavia la principale fonte di quest'aumento è la Calabria. Come riportato in quest' [articolo](https://www.ilfattoquotidiano.it/2020/05/25/sicilia-tasse-universitarie-azzerate-per-gli-studenti-iscritti-al-nord-che-rientrano-e-ognuno-portera-in-dote-1-200-euro-allateeo/5812844/) del Fatto Quotidiano del 25 maggio 2020: "*Gli studenti che torneranno a studiare in Sicilia saranno esonerati dal pagamento delle tasse universitarie e gli atenei della Regione il prossimo anno potranno incassare 1.200 euro per ogni ragazzo che rientra dal Nord o dall’estero*". L'iniziativa sembra aver avuto, almeno in parte, degli effetti, tuttavia il bilancio della regione rimane fortemente negativo (-5150 studenti), dal momento che nonostante siano diminuite leggermente le emigrazioni quest'anno, i ragazzi siciliani che si immatricolano al di fuori della regione sono circa il 30% rispetto ai residenti immatricolati.
+
+
+```{r, Emigrati dalla Sicilia per Regione, warning=FALSE, message=FALSE}
+
+emigration_map("Sicilia")
+
+```
+
+
+### Toscana
+
+```{r, Immatricolati in Toscana per Regione, warning=FALSE, message=FALSE}
+
+immigration_map("Toscana", articolo = "in")
+
+```
+
+La **Toscana** ha registrato un aumento del 7% nel complesso, tuttavia il numero di fuorisede è diminuito del 2% rispetto al 2019/20, allo stesso tempo si è verificato un aumento nelle emigrazioni del 46%. Tuttavia queste variazioni non hanno sortito grandi effetti dal momento che il numero di emigrati rispetto ai residenti è solo del 13%, il che si traduce in piccole variazioni in termini assoluti.
+
+
+```{r, Emigrati dalla Toscana per Regione, warning=FALSE, message=FALSE}
+
+emigration_map("Toscana", articolo = "in")
+
+```
+
+
+
+### Trentino
+
+```{r, Immatricolati in Trentino per Regione, warning=FALSE, message=FALSE}
+
+immigration_map("Trentino Alto Adige", articolo = "in")
+
+```
+
+Il **Trentino** è stata una delle regioni che sembrerebbe aver *perso* più studenti, registrando una variazione del **5%** in meno di immatricolazioni. Uno dei fattori di questo calo potrebbe essere ricercato in una diminuzione netta di immatricolati provenienti dal Veneto. Inoltre vale la pena fare un'ulteriore considerazione: negli utlimi anni il Trentino è stata una regione interessata da molti scambi di studenti con le regioni confinanti, possiamo notare una bassa percentuale di immatricolati dalla stessa regione, dato che gli studenti residenti in Trentino sembrerebbero essere molto propensi ad andare studiare al di fuori della regione.
+L'emigrazione è compensata anche da una forte immigrazione di studenti da altre regioni, infatti il rapporto di fuorisede sul totale di studenti è del 48%. 
+Un altro indicatore sul quale vale la pena riflettere è il rapporto tra studenti emigrati e studenti residenti del 126%, ad indicare che **per ogni studente che si iscrive in Trentino un altro si iscrive al di fuori**. Il rapporto di immigrati su residenti è altrettanto alto e indica che in media per uno studente che lascia il Trentino ne arriva uno da un'altra regione. Nel complesso tuttavia il bilancio è negativo, ad indicare che le entrate, pure elevate, non riscono a compensare completamente le uscite. 
+
+```{r, Emigrati dal Trentino per Regione, warning=FALSE, message=FALSE}
+
+emigration_map("Trentino Alto Adige", articolo = "in")
+
+```
+
+
+### Veneto
+
+```{r, Immatricolati in Veneto per Regione, warning=FALSE, message=FALSE}
+
+immigration_map("Veneto", articolo = "in")
+
+```
+
+Il **Veneto** è una delle poche regioni del Nord che presenta un bilancio negativo (-3641 studenti), la variazione complessiva di immatricolazioni per il 2020/21 è stata del 8,3%, la ragione principale dell'aumento può essere ricercata in un aumento degli studenti fuorisede, provenienti principalmente da Lombardia, Trentino e Friuli. Nel complesso la regione presenta una forte emigrazione di studenti residenti che non è controbilanciata dalle immigrazioni.
+
+
+```{r, Emigrati dal Veneto per Regione, warning=FALSE, message=FALSE}
+
+emigration_map("Veneto", articolo = "in")
+
+```
+
+
+### Umbria
+
+```{r, Immatricolati in Umbria per Regione, warning=FALSE, message=FALSE}
+
+immigration_map("Umbria")
+
+```
+
+L'**Umbria** è stata la regione che ha registrato l'aumnto più consistente sia in termini di aumento delle immatricolazioni nel suo complesso sia in termini di aumento dei fuorisede.  
+
+- ia registrato un'aumento di immatricolazioni a livello globale del 41%, inoltre il numero di fuorisede che si immatricolano nella regione è aumentato del 141% passando da 846 studenti nel 2019/21 a 2042 studenti nel 2020/21. 
+
+- i fuorisede provengono principalmente da Toscana, Lazio e Marche, ovvero le regioni confinanti. 
+
+Vale la pena osservare che nel 2020/21 l'Università di Perugia ha messo in atto una serie di incentivi per attirare studenti: 
+
+1. [Esenzione totale](https://www.perugiatoday.it/attualita/universita-di-perugia-esenzione-totale-dalle-tasse-fino-a-30-000-euro-di-isee-eliminato-l-accesso-programmato-locale.html) dalle tasse fino a 30000 euro di ISEE.
+
+2. Sono stati eliminati i numeri programmati per tutti i corsi, a eccezione dei corsi a numero programato previsti a livello nazionale. Tra i corsi *sbloccati* dall'università citiamo: Biotecnologie, Scienze Biologiche, Farmacia Chimica e Tecnologia Farmaceutiche.
+
+In questo caso è possibile vedere come la politica di **esenzione dalle tasse** e di **apertura dei corsi a numero programmato** abbia avuto l'effetto di attirare molti studenti. 
+
+
+```{r, Emigrati dal Umbria per Regione, warning=FALSE, message=FALSE}
+
+emigration_map("Umbria")
+
+```
+
+
+### Valle d'Aosta
+
+Nel 2020/21 la **Valle d'Aosta** ha visto incrementare il numero di studenti fuorisede dal Piemonte, che è l'unica regione dalla quale provengono studenti. La maggior parte dei residenti in Valle d'Aosta è molto propensa ad andare in Piemonte (92%), mentre i restanti preferiscono l'Emilia-Romagna (6%) e la Lombardia (2,6%).
+
+
+# Appendice: Test e Considerazioni
+
+## Confronto tra i modelli {.tabset}
+
+```{r, Confronto tra i Modelli,  echo=TRUE}
+bind_rows(
+bind_cols(Modello = "Modello Diplomati", 
+glance(modello_ridotto)[,c(1,2,3,5,7,8,9)]),
+
+bind_cols(Modello = "Modello AR(1)", 
+glance(modello_ar1)[,c(1,2,3,5,7,8,9)]),
+
+bind_cols(Modello = "Modello Completo", 
+glance(modello_completo)[,c(1,2,3,5,7,8,9)])
+) %>%
+mutate(r.squared = round(r.squared, 3),
+       adj.r.squared = round(adj.r.squared, 3), 
+       sigma = round(sigma, 3),
+       AIC = round(AIC, 2),
+       BIC = round(BIC, 2)) %>%
+knitr::kable(caption = "Confronto tra i Modelli") %>%
+kableExtra::kable_classic()
+
+
+```
+
+Alcune considerazioni statistiche sui modelli: 
+
+- Il modello con i diplomati è il migliore tra i tre modelli, presenta un errore (sigma) leggermente piu basso del modello AR(1). 
+
+- Tutti i modelli presentano un p.value per la statistica F, che testa l'ipotesi nulla che tutti i coefficenti siano congiuntamente uguali a zero,   molto basso, il che ci conferma la validità delle nostre regressioni.
+
+- Il modello **più pratico** per **prevedere** rimane il modello autoregressivo AR(1).
+
+
+
+## Test sul Modello Ridotto 
+
+```{r, Test sul Modello Ridotto, echo=TRUE, warning=FALSE, message=FALSE}
+
+mod = modello_ridotto
+
+bind_rows(
+  lmtest::bgtest(mod) %>% broom::tidy(),
+  lmtest::dwtest(mod) %>% broom::tidy(),
+  lmtest::bptest(mod) %>% broom::tidy(),
+  lmtest::gqtest(mod) %>% broom::tidy(),
+  lmtest::resettest(mod) %>% broom::tidy()
+  )[,c(1,2,4)]%>%
+mutate_if(is.numeric, round, 2)%>%
+knitr::kable(caption = "Testo Sul Modello Diplomati") %>%
+kableExtra::kable_paper()
+
+
+
+```
+
+I primi quattro test servono ad evidenziare possibili errori di specificazione del modello, in questo caso evidenziano sia la presenza di autocorrelazione, sia la presenza di eteroschedasticità nei residui. Nella realtà questa tipologia di errore si riflette in una stima più elevata
+degli errori per i coefficenti stimati, tuttavia il valore dei coefficenti rimane stabile, il che significa che l'interpretazione rimarrebbe la stessa, il che è più che sufficente per le nostre finalità. L'ultimo test è quello piu *temibile* in quanto la sua significatività implicherebbe lo star *sbagliano tutto*, il che fortunatamente non è il nostro caso. 
+
+
+## Previsione per il Modello Autoregressivo 
+
+La previsione della variazione è data dalla somma dell'intercetta (1.06) e la moltiplicazione del coefficente stimato (0.53) per la variazione di immatricolati
+nell'anno precedente. Il modello con i coefficenti stimati diventa: 
+
+$$\hat{\Delta IMM_t} = 1.06 + 0.53 *  \Delta IMM_{t-1}$$
+
+
+
+Gli immatricolati previsti sono dati dal prodotto degli immatricolati al tempo precedente per la variazione prevista. 
+
+$$\hat{IMM_t} = (1+\frac{\hat{\Delta IMM_t}}{100}) * IMM_{t-1}$$
+
+## Test Modello Autoregressivo  
+
+
+```{r, Test sul Modello AR(1),  echo=TRUE}
+
+# Test per l'autocorrelazione dei Residui (rifiuto H0 -> Autocorrelazione)
+# Test per la presenza di eteroschedasticita (non rifiutiamo H0 -> No evidenza di Eteroschedasticità)
+
+mod = modello_ar1
+
+# Test per l'autocorrelazione dei Residui (rifiuto H0 -> Autocorrelazione)
+# Test per la presenza di eteroschedasticita (non rifiutiamo H0 -> No evidenza di Eteroschedasticità)
+bind_rows(
+  lmtest::bgtest(mod) %>% broom::tidy(),
+  lmtest::dwtest(mod) %>% broom::tidy(),
+  lmtest::bptest(mod) %>% broom::tidy(),
+  lmtest::gqtest(mod) %>% broom::tidy(),
+  lmtest::resettest(mod) %>% broom::tidy()
+  )[,c(1,2,4)]%>%
+mutate_if(is.numeric, round, 2)%>%
+knitr::kable(caption = "Testo Sul Modello AR(1)") %>%
+kableExtra::kable_paper()
+
+```
+
+Tutti i test sul modello autoregressivo **non evidenziano errori particolari**, il che è un dato positivo in quanto l'utilità di questo modello è prevalentemente previsiva: un eventuale stima errata negli errori dei coefficenti si ripercuote su una previsione più ampia e con un valore più incerto. 
+
+## Test sul Modello Completo 
+
+Cercare di ottenere dei coefficenti significativi per gli effetti delle Riforme (con i p.value minimi) è stata messa in atto la stategia di 
+utilizzare una regressione polinomiale di secondo grado nelle variabili che *ipotizziamo essere la causa delle immatricolazioni*. Stimeremo quindi un unico modello in cui verranno inserite sia le variazioni di diplomati nell'anno passato, sia le variazioni degli immatrcolati. Utilizzando una regressione con i quadrati delle variabili siamo in grado di cogliere degli *effetti non lineari*, tuttavia essendo la regressione non lineare, i coefficenti non sono più *facilmente* interpretabili. 
+La forma funzionale stimata è la seguente: 
+
+$$\Delta IMM_t = \alpha_0 + \alpha_1 \Delta DIP_{t-1} +  \alpha_2 \Delta DIP_{t-1}^2  + \alpha_3 \Delta IMM_{t-1} +  \\  +  \alpha_4 Berlinguer +   \alpha_5 Moratti +  \alpha_6 Brunetta + \\ +  \alpha_7 CrisiEu  +   \alpha_8 Gelmini  + \epsilon_t $$
+
+
+### Stime del Modello 
+
+```{r}
+
+res = broom::tidy(modello_completo)
+res[1,1] = "Alpha_0 (Intercetta)"
+res[2,1] = "DIP (t-1)"
+res[3,1] = "DIP^2 (t-1)"
+res[4,1] = "IMM (t-1)"
+res %>%
+  mutate(estimate = round(estimate, 3)) %>%
+  mutate_if(is.numeric, round, 2)%>%
+  select(alpha = "term", stima = "estimate", errore = "std.error", p.value) %>%
+knitr::kable(caption = "Stime: Modello Completo") %>%
+kableExtra::kable_classic() %>% 
+kable_styling() %>%
+  row_spec(c(2,3,5), bold = T, color = "black", background = "yellow", font_size = 13)
+```
+
+Le nuove stime evidenziano un'aspetto interessante: la relazione tra immatricolazioni al tempo corrente e variazione di diplomati nell'anno passato sembrerebbe essere non lineare. 
+
+
+```{r, Test sul Modello Completo,  echo=TRUE}
+
+
+
+# Test per l'autocorrelazione dei Residui (rifiuto H0 -> Autocorrelazione)
+# Test per la presenza di eteroschedasticita (non rifiutiamo H0 -> No evidenza di Eteroschedasticità)
+
+mod = modello_completo
+
+# Test per l'autocorrelazione dei Residui (rifiuto H0 -> Autocorrelazione)
+# Test per la presenza di eteroschedasticita (non rifiutiamo H0 -> No evidenza di Eteroschedasticità)
+bind_rows(
+  lmtest::bgtest(mod) %>% broom::tidy(),
+  lmtest::dwtest(mod) %>% broom::tidy(),
+  lmtest::bptest(mod) %>% broom::tidy(),
+  lmtest::gqtest(mod) %>% broom::tidy(),
+  lmtest::resettest(mod) %>% broom::tidy()
+  )[,c(1,2,4)]%>%
+mutate_if(is.numeric, round, 2)%>%
+knitr::kable(caption = "Testo Sul Modello Completo") %>%
+kableExtra::kable_paper()
+
+```
+
+I test per il modello completo non evidenziano possibili errori di specificazioni, di conseguenza possiamo essere abbastanza sicuri soprattutto rigurardo al *reale effetto dei diplomati sulle immatricolazioni*. 
+
+
+
+
+# Contenuti Utili  
+
+Abbiamo deciso di riportare tutti i siti che abbiamo consultato o che pensiamo che possano essere utili a chi si dovesse approcciare all'analisi di questo fenomeno. Potrebbe accadere che i link potrebbero non riescano ad aprirsi all'interno dell'articolo, se dovesse presentarsi il problema, consigliamo di aprire il link in un nuovo pannello del browser.
+
+
+## Dati Istruzione Italiana {.tabset}
+
+- [Alma Laurea](https://www2.almalaurea.it/cgi-php/universita/statistiche/tendine.php?config=occupazione)
+- [Anagrafe Nazionale Studenti](https://anagrafe.miur.it/index.php)
+- [Miur Open Data](http://dati.ustat.miur.it/organization/ace58834-5a0b-40f6-9b0e-ed6c34ea8de0?tags=Universit%C3%A0&tags=Studenti)
+- [Open Data del Governo Italiano](https://www.dati.gov.it)
+- [Osservatorio Universitario del Sole 24 Ore](https://lab24.ilsole24ore.com/guida-universita/dettaglio.php?a=1&lb=quantitative+finance&scheda=0)
+- [Serie Storiche Istruzione Istat](http://seriestoriche.istat.it/index.php)
+- [Universitaly](https://www.universitaly.it/index.php)
+
+## Dati Europei 
+
+- [European Union Open Data](https://data.europa.eu/euodp/en/data)
+- [European University Institute](https://www.eui.eu/Research/Library/ResearchGuides/Economics/Statistics/DataPortal/EUOpenDataPortal)
+- [Portale Europeo dei Dati](https://www.europeandataportal.eu/it)
+
+
+## Altri Open Data 
+- [Datahub](https://datahub.io)
+- [Data World](https://data.world)
+- [Kaggle](https://www.kaggle.com)
+- [World Bank](https://databank.worldbank.org/home.aspx)
+
+
+
+
