@@ -1,4 +1,4 @@
-# Le Immatricolazioni in Italia nel 2020 [<img src="https://t4.ftcdn.net/jpg/01/33/48/03/360_F_133480376_PWlsZ1Bdr2SVnTRpb8jCtY59CyEBdoUt.jpg">](https://beniamino98.github.io/le-immatricolazioni-nelle-universita-italiane/)
+# Le Immatricolazioni in Italia nel 2020 [<img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcT8qQturk845vIJDdsBg5HgA-xu4XhmcWjxKk3-dWIVU7SllJw9kvTq4NX3gCU9_lDyzaw&usqp=CAU">](https://beniamino98.github.io/le-immatricolazioni-nelle-universita-italiane/)
 
 ## Obbiettivi del Contest [link](https://beniamino98.github.io/le-immatricolazioni-nelle-universita-italiane/index.html)!  
 
