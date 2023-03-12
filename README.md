@@ -1,6 +1,6 @@
 # Le Immatricolazioni in Italia nel 2020 [<img width=50 height=30 style="display: inline;" src="https://support.rebrandly.com/hc/article_attachments/360020801793/rebrandly_url_shortener_010.png">](https://beniamino98.github.io/le-immatricolazioni-nelle-universita-italiane/)
 
-## Obbiettivi del Contest [link](https://beniamino98.github.io/le-immatricolazioni-nelle-universita-italiane/index.html)!  
+## Obbiettivi del Contest 
 
 Le competenze del data scientist sono oggi tra le più richieste, nei settori più disparati: saper leggere i dati e saperli interpretare e rappresentare al fine di raggiungere un obiettivo, o di sviluppare un progetto di squadra, rappresenta una skill preziosissima che ogni studente, indipendentemente dal percorso di studi intrapreso, può sviluppare.
 Essere in grado di creare prodotti derivati dai dati è per natura una competenza interdisciplinare e pertanto anche un ottimo mezzo per fare interagire fra di loro i saperi.
