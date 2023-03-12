@@ -1,4 +1,4 @@
-# Le Immatricolazioni in Italia nel 2020 [<img width=30 height=30 style="display: inline;" src="https://support.rebrandly.com/hc/article_attachments/360020801793/rebrandly_url_shortener_010.png">](https://beniamino98.github.io/le-immatricolazioni-nelle-universita-italiane/)
+# Le Immatricolazioni in Italia nel 2020 [<img width=50 height=30 style="display: inline;" src="https://support.rebrandly.com/hc/article_attachments/360020801793/rebrandly_url_shortener_010.png">](https://beniamino98.github.io/le-immatricolazioni-nelle-universita-italiane/)
 
 ## Obbiettivi del Contest [link](https://beniamino98.github.io/le-immatricolazioni-nelle-universita-italiane/index.html)!  
 
